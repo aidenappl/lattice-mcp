@@ -4,12 +4,25 @@
   "description": "MCP server for Lattice container orchestration platform",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "lattice-mcp": "index.js"
+  },
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "lattice",
+    "containers",
+    "orchestration",
+    "model-context-protocol"
+  ],
+  "author": "Aiden Appleby",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidenappl/lattice-mcp.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   }
