@@ -2,12 +2,58 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createInterface } from "readline";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+// --- Interactive setup ---
+
+if (process.argv.includes("--setup")) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
+
+    console.log("\n  Lattice MCP Setup\n");
+
+    const apiUrl = (await ask("  Lattice API URL (https://lattice-api.appleby.cloud): ")).trim() || "https://lattice-api.appleby.cloud";
+    const apiToken = (await ask("  Lattice API Token: ")).trim();
+    rl.close();
+
+    if (!apiToken) {
+        console.error("\n  Error: API token is required.\n");
+        process.exit(1);
+    }
+
+    const mcpPath = join(homedir(), ".mcp.json");
+    let config = { mcpServers: {} };
+    if (existsSync(mcpPath)) {
+        try { config = JSON.parse(readFileSync(mcpPath, "utf-8")); } catch {}
+        if (!config.mcpServers) config.mcpServers = {};
+    }
+
+    config.mcpServers.lattice = {
+        command: "npx",
+        args: ["-y", "lattice-mcp"],
+        env: {
+            LATTICE_API_URL: apiUrl,
+            LATTICE_API_TOKEN: apiToken,
+        },
+    };
+
+    writeFileSync(mcpPath, JSON.stringify(config, null, 2) + "\n");
+    console.log(`\n  Written to ${mcpPath}`);
+    console.log("  Restart Claude Code to load the Lattice MCP server.\n");
+    process.exit(0);
+}
+
+// --- MCP Server ---
 
 const API_URL = process.env.LATTICE_API_URL;
 const API_TOKEN = process.env.LATTICE_API_TOKEN;
 
 if (!API_URL || !API_TOKEN) {
-    console.error("LATTICE_API_URL and LATTICE_API_TOKEN are required");
+    console.error("LATTICE_API_URL and LATTICE_API_TOKEN are required.");
+    console.error("Run `npx lattice-mcp --setup` to configure.");
     process.exit(1);
 }
 
