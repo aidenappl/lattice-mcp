@@ -122,23 +122,28 @@ exits immediately if either is missing. In practice these come from the `env` bl
 
 **Tool groups**, in file order:
 
+The counts below sum to **125**, matching the header and `grep -c 'server.tool(' index.js`. The
+first six rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner comment);
+every bolded row corresponds to a `// ───` banner group and matches its exact in-file name.
+
 | Group | Tools | Notes |
 |-------|-------|-------|
 | Overview & health | 2 | `lattice_overview`, `lattice_health` |
 | Workers | 3 + 4 actions | list/get/metrics; reboot, upgrade, stop-all, start-all |
-| Stacks | 2 + 4 actions | list/get; deploy, restart, stop, start, update |
-| Containers | 5 + 8 actions | get/list/logs/lifecycle/metrics; start, stop, restart, kill, pause, unpause, remove, recreate |
-| Deployments | 4 | list/get/logs, rollback, approve |
-| Audit & API tokens | 4 | audit log; token list/create/delete |
-| **Database instances** | **11** | CRUD, `lattice_database_action`, credentials, snapshots, restore |
-| **Backup destinations** | **6** | CRUD + test |
-| **Registries** | **8** | CRUD, test, test-inline, repositories, tags |
-| **Discovery & diagnostics** | **7** | search, anomalies, fleet-metrics, versions, refresh-versions, container metrics, self |
-| **Stacks — compose & tokens** | **13** | create/delete, compose update/sync/import, export/import, save-template, deploy tokens |
-| **Containers — definition CRUD** | **3** | create/update/delete definitions |
-| **Workers — resources** | **16** | worker CRUD, tokens, volumes, networks, force-remove |
-| **Global env vars / templates / webhooks** | **12** | |
-| **Users & instance config** | **12** | users, SSO, SMTP, notification prefs |
+| Stacks | 2 + 5 actions | list/get; deploy, restart, stop, start, update |
+| Containers | 4 + 8 actions | list/get/logs/lifecycle; start, stop, restart, kill, pause, unpause, remove, recreate. (`lattice_get_container_metrics` is *not* here — it lives under **Discovery & diagnostics**.) |
+| Deployments | 4 | list/get/logs, rollback. (`lattice_approve_deployment` is *not* here — it lives under **Stacks — lifecycle, compose & deploy tokens**.) |
+| Instance self-update | 2 | `lattice_update_api`, `lattice_update_web` — tell the API/web container to pull its latest image and redeploy itself |
+| Audit & API tokens | 4 | `lattice_get_audit_log`; API token list/create/delete |
+| **Database instances** | **11** | CRUD, `lattice_database_action` (start/stop/restart/remove enum), `lattice_get_database_credentials`, snapshot list/create/restore/delete |
+| **Backup destinations** | **6** | list/get/create/update/delete + `lattice_test_backup_destination` |
+| **Registries** | **8** | list/create/update/delete, `lattice_test_registry`, `lattice_test_registry_inline`, `lattice_list_registry_repositories`, `lattice_list_registry_tags` |
+| **Discovery & diagnostics** | **7** | `lattice_search`, `lattice_get_anomalies`, `lattice_get_fleet_metrics`, `lattice_get_versions`, `lattice_refresh_versions`, `lattice_get_container_metrics`, `lattice_get_self` |
+| **Stacks — lifecycle, compose & deploy tokens** | **13** | create/delete, `lattice_get_stack_containers`, compose update/sync/import, export/import, `lattice_save_stack_as_template`, deploy-token list/create/delete, `lattice_approve_deployment` |
+| **Containers — definition CRUD** | **3** | `lattice_create_container`, `lattice_update_container`, `lattice_delete_container` |
+| **Workers — registration, tokens, volumes, networks** | **16** | worker create/update/delete, `lattice_get_worker_container_stats`, worker-token ×3, volume ×3, worker-network ×3, `lattice_list_all_networks`, `lattice_delete_network`, `lattice_force_remove_container` |
+| **Global env vars, templates, webhooks** | **12** | env-var CRUD (4), template list/create/delete (3), webhook list/create/update/delete/test (5) |
+| **Users & instance configuration** | **11** | user CRUD (4); SSO get/update (2); SMTP get/update/test (3); notification-prefs get/update (2) |
 
 Bolded groups were added in **1.1.0**, closing a gap where the MCP had drifted roughly two
 months behind `lattice-api` — database instances shipped in the API in May 2026 and were
