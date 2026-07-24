@@ -32,8 +32,9 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 - **Runtime:** Node ≥18 (needs global `fetch` and `AbortSignal.timeout`). `"type": "module"` —
   ESM only, top-level `await` is used at the bottom of `index.js`.
 - **`@modelcontextprotocol/sdk` ^1.29.0** — `McpServer` + `StdioServerTransport`.
-- **`zod`** — argument schemas. Supplied transitively by the MCP SDK; it is *not* a declared
-  dependency, which is a latent fragility (see Rules & guardrails).
+- **`zod` ^4.4.3** — argument schemas. Declared explicitly as of **1.1.1** (it was previously
+  only resolved transitively through the MCP SDK, a latent fragility); the range matches the
+  version the SDK resolves.
 - No build step, no bundler, no tests, no lint config. `node --check index.js` is the only
   static gate.
 
@@ -90,9 +91,12 @@ and supply the real token.
   the noun (`lattice_list_database_instances`). The prefix is what disambiguates these from
   `monitor_*` and `forta_*` tools in a shared client.
 - **`api(method, path, params, body)`** — `params` become query string entries (undefined/null
-  are dropped), `body` is JSON-encoded. Errors are swallowed and returned as
-  `{success:false, error_message}` so a network failure surfaces as tool output rather than a
-  transport crash.
+  are dropped), `body` is JSON-encoded. Failures are returned as tool output, never thrown, so
+  they surface to the agent rather than crashing the transport. A network-level failure returns
+  `{success:false, error_message: "API request failed: …"}`; a response that arrives but is not
+  JSON (e.g. a 502/504 HTML page from the TLS proxy) returns
+  `{success:false, error_code: <http status>, error_message: "API returned a non-JSON response …"}`
+  with a truncated body — bodies are never logged, only returned, since they can carry secrets.
 - **`body(obj)`** strips `undefined` keys. **Always use it on PUT/PATCH tools.** The API treats
   a present-but-null field as an explicit clear, so forwarding raw `{...fields}` on an update
   would wipe every field the caller didn't pass.
@@ -149,6 +153,15 @@ Bolded groups were added in **1.1.0**, closing a gap where the MCP had drifted r
 months behind `lattice-api` — database instances shipped in the API in May 2026 and were
 entirely unreachable from the MCP until then.
 
+**1.1.1** is a bug-fix release (no tool count change). It corrects three request-shape/route bugs
+verified against `lattice-api` handlers: `lattice_get_self` now calls `GET /auth/self` (the old
+`GET /admin/self` route never existed and always 404'd — the endpoint is `HandleAuthSelf` on the
+bearer-authed `/auth` subrouter); `lattice_force_remove_container` now sends `{container_name}` in
+the JSON body (`HandleForceRemoveContainer` reads it there, not from query params, so the old call
+always 400'd); and `lattice_test_backup_destination` now marks `worker_id` as **required** (a query
+param the handler 400s without — the test dispatches over the worker's WebSocket). It also hardens
+`api()` against non-JSON responses (see *How code is written here*) and declares `zod` explicitly.
+
 **Consolidations.** Where `lattice-api` exposes several paths served by one handler, this repo
 exposes one tool with an enum rather than N tools. `lattice_database_action` covers
 `/start`, `/stop`, `/restart` and `/remove`. Worker actions are the historical exception — they
@@ -192,9 +205,10 @@ predate this convention and remain separate tools.
 - **Do not break tool names.** They are a public contract: renaming one silently breaks any
   saved workflow or prompt that referenced it. Add a new tool and deprecate in the description
   instead.
-- **`zod` is used but not declared** in `package.json` — it resolves transitively through the
-  MCP SDK. If the SDK ever drops or hoists it differently, every tool schema breaks at startup.
-  Adding it as an explicit dependency is the correct fix; do it in a standalone change.
+- **`zod` is declared explicitly** in `package.json` (`^4.4.3`) as of **1.1.1**. It used to
+  resolve only transitively through the MCP SDK, which meant a SDK change that dropped or hoisted
+  it differently would break every tool schema at startup. Keep the declared range aligned with
+  the version the SDK actually resolves (check `package-lock.json`).
 - **Keep destructive descriptions honest.** If a tool destroys data, the description must say so
   and name the safer alternative.
 - Publishing is outward-facing and effectively irreversible (npm unpublish is restricted after

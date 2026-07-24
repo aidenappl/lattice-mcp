@@ -77,11 +77,26 @@ async function api(method, path, params, body) {
         opts.headers["Content-Type"] = "application/json";
         opts.body = JSON.stringify(body);
     }
+    let res;
     try {
-        const res = await fetch(url.toString(), opts);
-        return await res.json();
+        res = await fetch(url.toString(), opts);
     } catch (err) {
+        // Network-level failure (DNS, connection refused, timeout) — no response at all.
         return { success: false, error: err.message, error_message: `API request failed: ${err.message}` };
+    }
+    // Response arrived. Read the body once as text, then try to parse it as JSON.
+    // On parse failure surface the HTTP status and a truncated text body rather than
+    // an opaque parse error — a 502/504 HTML page from the TLS proxy lands here.
+    // Never log bodies anywhere; responses can carry secrets.
+    const raw = await res.text();
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return {
+            success: false,
+            error_code: res.status,
+            error_message: `API returned a non-JSON response (HTTP ${res.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`,
+        };
     }
 }
 
@@ -99,7 +114,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.0.0",
+    version: "1.1.1",
 });
 
 // Overview
@@ -559,9 +574,9 @@ server.tool("lattice_delete_backup_destination", "Delete a backup destination. I
     return { content: text(res) };
 });
 
-server.tool("lattice_test_backup_destination", "Test connectivity and credentials for a backup destination without writing a real backup", {
+server.tool("lattice_test_backup_destination", "Test connectivity and credentials for a backup destination without writing a real backup. The test is dispatched over the worker's WebSocket, so worker_id is required and that worker must be connected", {
     id: z.number().describe("Backup destination ID"),
-    worker_id: z.number().optional().describe("Worker to run the test from"),
+    worker_id: z.number().describe("Worker to run the test from — required; the test runs on this worker over its WebSocket, so it must be connected"),
 }, async ({ id, worker_id }) => {
     const res = await api("POST", `/admin/backup-destinations/${id}/test`, { worker_id });
     return { content: text(res) };
@@ -682,7 +697,7 @@ server.tool("lattice_get_container_metrics", "Get a single container's CPU, memo
 });
 
 server.tool("lattice_get_self", "Get the user this API token authenticates as, including role", {}, async () => {
-    const res = await api("GET", "/admin/self");
+    const res = await api("GET", "/auth/self");
     return { content: text(res) };
 });
 
@@ -974,7 +989,7 @@ server.tool("lattice_force_remove_container", "Force-remove a container on a wor
     id: z.number().describe("Worker ID"),
     name: z.string().describe("Container name to force-remove"),
 }, async ({ id, name }) => {
-    const res = await api("POST", `/admin/workers/${id}/force-remove`, { name });
+    const res = await api("POST", `/admin/workers/${id}/force-remove`, null, { container_name: name });
     return { content: text(res) };
 });
 

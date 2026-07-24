@@ -31,7 +31,7 @@ Once configured, ask Claude Code things like:
 
 - **Node ≥18** (needs global `fetch` and `AbortSignal.timeout`), ESM (`"type": "module"`).
 - **`@modelcontextprotocol/sdk` ^1.29.0** — `McpServer` + `StdioServerTransport`.
-- **`zod`** for argument schemas (resolved transitively via the MCP SDK).
+- **`zod` ^4.4.3** for argument schemas (a declared dependency as of 1.1.1).
 - No build step, no bundler. `node --check index.js` is the only static gate.
 
 ## Getting started
@@ -179,7 +179,7 @@ All 125 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | `lattice_create_backup_destination` | Create a destination |
 | `lattice_update_backup_destination` | Update a destination |
 | `lattice_delete_backup_destination` | Delete a destination ⚠️ |
-| `lattice_test_backup_destination` | Test connectivity without writing a backup |
+| `lattice_test_backup_destination` | Test connectivity without writing a backup (requires a connected `worker_id`) |
 
 ### Registries
 | Tool | Description |
