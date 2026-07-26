@@ -57,6 +57,113 @@ if (!API_URL || !API_TOKEN) {
     process.exit(1);
 }
 
+// --- Sensitive value masking ---
+//
+// Lattice's admin API answers to an admin token, so it returns live
+// credentials in full: container and stack env vars, global env var values
+// (masking there is server-side and non-admin-only), database passwords,
+// freshly minted deploy/worker/API tokens. None of that is needed to answer
+// the questions these tools exist to answer, and anything that reaches a
+// model's context is in a transcript forever.
+//
+// Sensitive values are masked to their first two characters plus a
+// fixed-width tail: "supersecret" -> "su**********". The prefix keeps a value
+// identifiable and comparable — you can still tell a frt_ token from an obk_
+// one, or spot that two containers share the same key — while the fixed tail
+// avoids disclosing the length.
+//
+// Set LATTICE_ALLOW_SECRET_VALUES=1 to pass values through unmasked.
+
+const ALLOW_SECRETS = process.env.LATTICE_ALLOW_SECRET_VALUES === "1";
+
+function mask(value) {
+    if (typeof value !== "string" || value === "") return value;
+    // Under three characters there is no prefix worth keeping — a two-char
+    // secret would otherwise round-trip as itself.
+    if (value.length < 3) return "**********";
+    return value.slice(0, 2) + "**********";
+}
+
+// Response fields that are a credential wherever they appear.
+const SECRET_FIELDS = new Set([
+    "password", "root_password", "client_secret", "secret", "secret_key",
+    "secret_access_key", "access_key", "access_key_id", "token", "api_token",
+    "admin_token", "deploy_token", "worker_token", "plaintext", "private_key",
+    "encryption_key", "signing_key", "connection_string", "dsn",
+]);
+
+// Env-var and compose keys are free-form, so they are matched by shape rather
+// than by name. The `_url`/`_uri`/`_endpoint` exclusion keeps TOKEN_URL and
+// AUTH_URL readable — they are addresses, not credentials, and masking them
+// makes an SSO misconfiguration much harder to diagnose.
+const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|signing[-_]?key|encryption[-_]?key|credential|dsn|salt)/i;
+const ADDRESS_NAME = /_(url|uri|endpoint|host|port|issuer)$/i;
+
+function isSecretName(name) {
+    return SECRET_NAME.test(name) && !ADDRESS_NAME.test(name);
+}
+
+// Container and stack env vars arrive as a JSON object encoded in a string.
+// Masking the whole blob would hide the variable names too, which are the
+// useful half — so it is parsed, filtered by key, and re-encoded.
+function maskEnvBlob(raw) {
+    if (typeof raw !== "string" || raw === "") return raw;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        // Not the JSON object shape we expect — mask it wholesale rather than
+        // pass an unknown blob through.
+        return mask(raw);
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return raw;
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+        out[k] = isSecretName(k) && typeof v === "string" ? mask(v) : v;
+    }
+    return JSON.stringify(out);
+}
+
+// Compose YAML carries the same secrets in `environment:` blocks, in either
+// `- NAME=value` or `NAME: value` form. Matching the assignment line directly
+// avoids having to track YAML block structure.
+const COMPOSE_ENV_LINE = /^(\s*-?\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*[:=]\s*)(.+)$/;
+
+function maskComposeYAML(raw) {
+    if (typeof raw !== "string" || raw === "") return raw;
+    return raw
+        .split("\n")
+        .map((line) => {
+            const m = line.match(COMPOSE_ENV_LINE);
+            if (!m || !isSecretName(m[2])) return line;
+            return m[1] + m[2] + m[3] + mask(m[4].trim());
+        })
+        .join("\n");
+}
+
+// Walks a decoded response and masks every sensitive value in place.
+function sanitise(node) {
+    if (ALLOW_SECRETS || node === null || typeof node !== "object") return node;
+    if (Array.isArray(node)) return node.map(sanitise);
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+        if (k === "env_vars") {
+            out[k] = maskEnvBlob(v);
+        } else if (k === "compose_yaml") {
+            out[k] = maskComposeYAML(v);
+        } else if (k === "value" && node.is_secret === true) {
+            // Global env vars: the value is only a secret when flagged as one,
+            // and masking the rest would hide image tags, ports and hostnames.
+            out[k] = mask(v);
+        } else if (SECRET_FIELDS.has(k) && typeof v === "string") {
+            out[k] = mask(v);
+        } else {
+            out[k] = sanitise(v);
+        }
+    }
+    return out;
+}
+
 // --- HTTP helper ---
 
 async function api(method, path, params, body) {
@@ -90,7 +197,7 @@ async function api(method, path, params, body) {
     // Never log bodies anywhere; responses can carry secrets.
     const raw = await res.text();
     try {
-        return JSON.parse(raw);
+        return sanitise(JSON.parse(raw));
     } catch {
         return {
             success: false,
@@ -438,7 +545,7 @@ server.tool("lattice_delete_api_token", "Delete an API token", {
 server.tool("lattice_list_database_instances", "List managed database instances with engine, version, status, worker and health. Filter by worker, engine or status", {
     worker_id: z.number().optional().describe("Filter by worker ID"),
     engine: z.enum(["mysql", "mariadb", "postgres"]).optional().describe("Filter by engine"),
-    status: z.string().optional().describe("Filter by status (running, stopped, creating, error)"),
+    status: z.enum(["pending", "provisioning", "running", "stopped", "restarting", "degraded", "deleting", "error"]).optional().describe("Filter by lifecycle status"),
     limit: z.number().optional().describe("Max instances to return"),
     offset: z.number().optional().describe("Pagination offset"),
 }, async (args) => {
@@ -453,18 +560,18 @@ server.tool("lattice_get_database_instance", "Get one database instance: engine,
     return { content: text(res) };
 });
 
-server.tool("lattice_create_database_instance", "Provision a database instance on a worker. Creates a real container — pick a port that is free on that worker", {
+server.tool("lattice_create_database_instance", "Provision a database instance on a worker. Creates a real container. Omit `port` to have a free one allocated automatically — that is the recommended path; a port already in use returns 409 naming the conflict", {
     name: z.string().describe("Instance name (must be unique)"),
     engine: z.enum(["mysql", "mariadb", "postgres"]).describe("Database engine"),
     worker_id: z.number().describe("Worker to provision on"),
     engine_version: z.string().optional().describe("Engine version tag; the API picks a default when omitted"),
-    port: z.number().optional().describe("Host port to expose"),
+    port: z.number().optional().describe("Host port to expose. Omit to auto-allocate a free port from the managed range (20000-29999)"),
     root_password: z.string().optional().describe("Root/superuser password"),
     database_name: z.string().optional().describe("Initial database to create"),
     username: z.string().optional().describe("Application user to create"),
     password: z.string().optional().describe("Application user's password"),
     cpu_limit: z.number().optional().describe("CPU limit in cores"),
-    memory_limit: z.number().optional().describe("Memory limit in bytes"),
+    memory_limit: z.number().optional().describe("Memory limit in MEGABYTES (the API converts to bytes; values under 6MB are rejected by Docker)"),
     snapshot_schedule: z.string().optional().describe("Cron expression for automatic snapshots"),
     retention_count: z.number().optional().describe("How many automatic snapshots to keep"),
     backup_destination_id: z.number().optional().describe("Backup destination for snapshots"),
@@ -476,13 +583,13 @@ server.tool("lattice_create_database_instance", "Provision a database instance o
 server.tool("lattice_update_database_instance", "Update a database instance's configuration. Only the fields you pass are changed", {
     id: z.number().describe("Database instance ID"),
     name: z.string().optional(),
-    status: z.string().optional(),
-    port: z.number().optional(),
+    status: z.enum(["pending", "provisioning", "running", "stopped", "restarting", "degraded", "deleting", "error"]).optional().describe("Lifecycle status — normally managed by the reconciler; set manually only to correct drift"),
+    port: z.number().optional().describe("New host port; rejected with 409 if already claimed on the worker"),
     root_password: z.string().optional().describe("New root password"),
     password: z.string().optional().describe("New application user password"),
     cpu_limit: z.number().optional(),
-    memory_limit: z.number().optional(),
-    health_status: z.string().optional(),
+    memory_limit: z.number().optional().describe("Memory limit in MEGABYTES"),
+    health_status: z.enum(["none", "starting", "healthy", "unhealthy"]).optional(),
     snapshot_schedule: z.string().optional().describe("Cron expression for automatic snapshots"),
     retention_count: z.number().optional(),
     backup_destination_id: z.number().optional(),
@@ -507,10 +614,66 @@ server.tool("lattice_database_action", "Start, stop, restart or remove a databas
     return { content: text(res) };
 });
 
-server.tool("lattice_get_database_credentials", "Get a database instance's connection credentials. Returns secret values — avoid unless the credentials are actually needed", {
+server.tool("lattice_get_database_connection", "Get a database instance's host, port, database and username. Contains no secrets — prefer this over the credential tools when you only need to know where a database lives", {
+    id: z.number().describe("Database instance ID"),
+}, async ({ id }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/connection`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_reveal_database_credentials", "Reveal a database instance's live credentials. Every call is audited and recorded against the instance. Returns the application user by default; set include_root only when root access is genuinely required. Passwords come back masked to their first two characters — enough to confirm which credential is deployed, not enough to use. Set LATTICE_ALLOW_SECRET_VALUES=1 in the MCP server env to get the real values, or read them from the Lattice UI", {
+    id: z.number().describe("Database instance ID"),
+    include_root: z.boolean().optional().describe("Also return the root/superuser password (default false)"),
+}, async ({ id, include_root }) => {
+    const res = await api("POST", `/admin/database-instances/${id}/reveal`, null, body({ include_root }));
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_database_credentials", "DEPRECATED — returns root credentials from a plain GET. Use lattice_reveal_database_credentials instead, which is audited and scoped", {
     id: z.number().describe("Database instance ID"),
 }, async ({ id }) => {
     const res = await api("GET", `/admin/database-instances/${id}/credentials`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_database_events", "Get a database instance's lifecycle history — every status transition, failure, reconciliation, console open and credential reveal. START HERE when a database is in an unexpected state: this is what explains how it got there", {
+    id: z.number().describe("Database instance ID"),
+    kind: z.enum(["requested", "accepted", "transition", "health", "failed", "reconciled", "console_open", "reveal"]).optional().describe("Filter by event kind"),
+    limit: z.number().optional().describe("Max events to return"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/events`, params);
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_database_logs", "Get a database container's stdout/stderr. Use together with lattice_get_database_events when diagnosing a failed or degraded instance — the events say what happened, the logs say why", {
+    id: z.number().describe("Database instance ID"),
+    stream: z.enum(["stdout", "stderr"]).optional().describe("Filter by stream"),
+    limit: z.number().optional().describe("Max log lines to return"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/logs`, params);
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_database_lifecycle_logs", "Get worker-emitted lifecycle messages for a database container, including provisioning progress and the reason a create failed", {
+    id: z.number().describe("Database instance ID"),
+    limit: z.number().optional().describe("Max entries to return"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/lifecycle`, params);
+    return { content: text(res) };
+});
+
+server.tool("lattice_open_database_console", "Authorise an interactive console session against a running database and return the worker, container and SQL client command to run. The session itself runs over the admin WebSocket, so this returns the authorisation, not a live shell", {
+    id: z.number().describe("Database instance ID"),
+}, async ({ id }) => {
+    const res = await api("POST", `/admin/database-instances/${id}/console`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_worker_port_availability", "List host ports already claimed on a worker (by databases and by stack containers) and get a free suggestion. Check this before pinning a database to a specific port", {
+    id: z.number().describe("Worker ID"),
+    port: z.number().optional().describe("Check one specific port instead of listing all claims"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/workers/${id}/port-availability`, params);
     return { content: text(res) };
 });
 
@@ -801,7 +964,7 @@ server.tool("lattice_list_deploy_tokens", "List a stack's deploy tokens — the 
     return { content: text(res) };
 });
 
-server.tool("lattice_create_deploy_token", "Create a deploy token for a stack. The plaintext is returned once; use it as https://<lattice>/api/deploy/<token>?container=<name>", {
+server.tool("lattice_create_deploy_token", "Create a deploy token for a stack. The plaintext is returned once and this server masks it to its first two characters, so the usable value never enters a transcript — read it from the Lattice UI, or set LATTICE_ALLOW_SECRET_VALUES=1. Used as https://<lattice>/api/deploy/<token>?container=<name>", {
     id: z.number().describe("Stack ID"),
     name: z.string().describe("Token name, e.g. 'github-actions'"),
 }, async ({ id, name }) => {
@@ -922,7 +1085,7 @@ server.tool("lattice_list_worker_tokens", "List a worker's registration tokens. 
     return { content: text(res) };
 });
 
-server.tool("lattice_create_worker_token", "Create a registration token for a worker, used by the runner to connect. Plaintext is returned once", {
+server.tool("lattice_create_worker_token", "Create a registration token for a worker, used by the runner to connect. Plaintext is returned once and this server masks it to its first two characters — read the usable value from the Lattice UI, or set LATTICE_ALLOW_SECRET_VALUES=1", {
     id: z.number().describe("Worker ID"),
     name: z.string().describe("Token name"),
 }, async ({ id, name }) => {
@@ -1009,7 +1172,7 @@ server.tool("lattice_force_remove_container", "Force-remove a container on a wor
 // Global env vars, templates, webhooks
 // ─────────────────────────────────────────────────────────────────────────────
 
-server.tool("lattice_list_env_vars", "List global environment variables available for interpolation into stack and container configs as ${NAME}. Values marked is_secret are masked", {}, async () => {
+server.tool("lattice_list_env_vars", "List global environment variables available for interpolation into stack and container configs as ${NAME}. Values marked is_secret are masked to their first two characters by this server — the API itself only masks them for non-admin callers, and this MCP authenticates as an admin", {}, async () => {
     const res = await api("GET", "/admin/env-vars");
     return { content: text(res) };
 });

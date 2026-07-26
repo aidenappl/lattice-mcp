@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+/**
+ * Static verification for lattice-mcp.
+ *
+ * index.js cannot simply be imported to check it: it ends in a top-level await
+ * that connects the stdio transport, so importing would hang waiting for a
+ * client. Everything here is therefore checked by parsing the source.
+ *
+ * What this catches:
+ *
+ *  - Duplicate tool names. `server.tool()` silently accepts a duplicate — the
+ *    last registration wins and the earlier tool disappears with no error. That
+ *    is invisible until an agent calls the vanished tool.
+ *  - Tool counts in README.md and AGENTS.md drifting from the code. This repo
+ *    already shipped a release where the MCP lagged the API by two months; the
+ *    documented count is the cheapest tripwire for that.
+ *  - Tools not following the lattice_ prefix, which the client relies on.
+ */
+
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+const failures = [];
+const fail = (msg) => failures.push(msg);
+
+const source = readFileSync("index.js", "utf8");
+
+// ── Syntax ───────────────────────────────────────────────────────────────────
+try {
+    execFileSync(process.execPath, ["--check", "index.js"], { stdio: "pipe" });
+} catch (err) {
+    fail(`index.js failed to parse:\n${err.stderr?.toString() ?? err.message}`);
+}
+
+// ── Tool registrations ───────────────────────────────────────────────────────
+const names = [...source.matchAll(/server\.tool\(\s*"([^"]+)"/g)].map((m) => m[1]);
+
+if (names.length === 0) {
+    fail("no server.tool() registrations found — did the call shape change?");
+}
+
+const seen = new Set();
+const duplicates = new Set();
+for (const name of names) {
+    if (seen.has(name)) duplicates.add(name);
+    seen.add(name);
+}
+if (duplicates.size > 0) {
+    fail(
+        `duplicate tool names (the later registration silently replaces the earlier): ${[...duplicates].join(", ")}`,
+    );
+}
+
+const misnamed = names.filter((n) => !n.startsWith("lattice_"));
+if (misnamed.length > 0) {
+    fail(`tools not prefixed with lattice_: ${misnamed.join(", ")}`);
+}
+
+// ── Documented counts must match the code ────────────────────────────────────
+const toolCount = names.length;
+
+for (const file of ["README.md", "AGENTS.md"]) {
+    const doc = readFileSync(file, "utf8");
+    const match = doc.match(/\*\*(\d+) typed tools\*\*/);
+    if (!match) {
+        fail(`${file}: could not find a "**N typed tools**" figure to check against`);
+        continue;
+    }
+    const documented = Number(match[1]);
+    if (documented !== toolCount) {
+        fail(
+            `${file} documents ${documented} tools but index.js registers ${toolCount} — ` +
+                `update the docs in the same change (see "Keeping this file updated")`,
+        );
+    }
+}
+
+// README lists every tool in a table; make sure the listing is complete too.
+const readme = readFileSync("README.md", "utf8");
+const undocumented = names.filter((n) => !readme.includes(`\`${n}\``));
+if (undocumented.length > 0) {
+    fail(`tools missing from the README tool tables: ${undocumented.join(", ")}`);
+}
+
+// ── Report ───────────────────────────────────────────────────────────────────
+if (failures.length > 0) {
+    console.error("verification failed:\n");
+    for (const f of failures) console.error(`  ✗ ${f}`);
+    process.exit(1);
+}
+
+console.log(`✓ index.js parses`);
+console.log(`✓ ${toolCount} tools registered, no duplicates, all lattice_-prefixed`);
+console.log(`✓ README.md and AGENTS.md agree on the tool count`);
+console.log(`✓ every tool appears in the README tool tables`);

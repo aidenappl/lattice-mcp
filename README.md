@@ -8,7 +8,7 @@ Model Context Protocol server for [Lattice](https://github.com/aidenappl/lattice
 
 ## Overview
 
-`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **126 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
+`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **133 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
 
 Once configured, ask Claude Code things like:
 
@@ -83,12 +83,12 @@ Restart Claude Code after setup so the new server and tools are picked up.
 | `npm install` | Install dependencies (not vendored) |
 | `node --check index.js` | Syntax gate — the only static check that exists |
 | `LATTICE_API_URL=… LATTICE_API_TOKEN=… node index.js` | Run the server on stdio |
-| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 126) |
+| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 133) |
 | `npm publish` | Publish to npm — **this is deployment** (requires 2FA passkey from an interactive terminal) |
 
 ## Tools
 
-All 126 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
+All 133 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
 
 ### Overview & health
 | Tool | Description |
@@ -162,15 +162,26 @@ All 126 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 |------|-------------|
 | `lattice_list_database_instances` | List managed databases (filter by worker, engine, status) |
 | `lattice_get_database_instance` | Full instance config |
-| `lattice_create_database_instance` | Provision mysql/mariadb/postgres on a worker |
+| `lattice_create_database_instance` | Provision mysql/mariadb/postgres on a worker (omit `port` to auto-allocate) |
 | `lattice_update_database_instance` | Update config, limits, snapshot schedule |
 | `lattice_delete_database_instance` | Delete an instance ⚠️ |
 | `lattice_database_action` | start / stop / restart / remove ⚠️ |
-| `lattice_get_database_credentials` | Connection credentials (returns secrets) |
+| `lattice_get_database_connection` | Host, port, database and username — no secrets |
+| `lattice_reveal_database_credentials` | Reveal live credentials (audited; root only on request) |
+| `lattice_get_database_credentials` | **Deprecated** — root credentials via GET; use the reveal tool |
+| `lattice_get_database_events` | Lifecycle history — start here when a database looks wrong |
+| `lattice_get_database_logs` | Container stdout/stderr |
+| `lattice_get_database_lifecycle_logs` | Worker lifecycle messages, incl. why a create failed |
+| `lattice_open_database_console` | Authorise an interactive SQL console session |
 | `lattice_list_database_snapshots` | Snapshots for an instance |
 | `lattice_create_database_snapshot` | Take a snapshot now |
 | `lattice_restore_database_snapshot` | Restore from a snapshot ⚠️ |
-| `lattice_delete_database_snapshot` | Delete a snapshot ⚠️ |
+| `lattice_delete_database_snapshot` | Delete a snapshot and its remote file ⚠️ |
+
+### Worker port allocation
+| Tool | Description |
+|------|-------------|
+| `lattice_get_worker_port_availability` | Claimed host ports on a worker, plus a free suggestion |
 
 ### Backup destinations
 | Tool | Description |
@@ -286,7 +297,7 @@ Everything lives in one file:
 
 | Path | Role |
 |------|------|
-| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 126 `server.tool(...)` registrations, transport connect. |
+| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 133 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata; `bin.lattice-mcp` → `index.js`. |
 | `AGENTS.md` | Contributor/agent guide — conventions, handler contracts, verification. |
 | `README.md` | This file. |

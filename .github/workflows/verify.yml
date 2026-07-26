@@ -1,0 +1,33 @@
+name: Verify
+
+# lattice-mcp is published to npm by hand, so there is no build-and-deploy
+# pipeline to hang this off. This workflow exists purely as a correctness gate on
+# push and pull request.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Parses index.js, rejects duplicate tool names (server.tool silently
+      # lets the last registration win), and fails if README.md/AGENTS.md have
+      # drifted from the registered tool count.
+      - name: Verify
+        run: npm test

@@ -2,7 +2,7 @@
 
 > `lattice-mcp` is the **Model Context Protocol server for Lattice**, the container
 > orchestration platform that runs every `appleby.cloud` service. It exposes the
-> `lattice-api` admin surface to Claude Code as **126 typed tools** — workers, stacks,
+> `lattice-api` admin surface to Claude Code as **133 typed tools** — workers, stacks,
 > containers, deployments, databases, registries, networks, volumes and instance config.
 > This file orients any agent/worker before touching code in this repo.
 >
@@ -42,7 +42,7 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 
 | Path | Role |
 |------|------|
-| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 126 `server.tool(...)` registrations, transport connect. |
+| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 133 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata. `bin.lattice-mcp` → `index.js`, so `npx lattice-mcp` works. |
 | `README.md` | User-facing setup + full tool table. |
 | `AGENTS.md` | This file. |
@@ -113,6 +113,40 @@ and supply the real token.
   `HandleDatabaseAction` derives its action from the **last URL path segment**, not from a body
   field.
 
+### Sensitive value masking
+
+`api()` passes every decoded JSON response through **`sanitise()`** before returning it. This is
+central, not per-tool, so a newly added tool is safe by default rather than by remembering.
+
+`mask()` keeps a value's **first two characters** and appends a **fixed-width tail** —
+`"supersecret"` → `"su**********"`. The prefix is what makes the mask useful rather than merely
+safe: you can still tell a `frt_` token from an `obk_` one, spot that two containers share a
+key, or confirm a rotation actually changed a value. The tail is fixed width so the mask does
+not disclose the real length. Values under three characters are masked whole.
+
+Four rules, in the order `sanitise()` applies them:
+
+| Field | Handling |
+|-------|----------|
+| `env_vars` | Parsed as JSON, then values whose **key** matches `isSecretName()` are masked. The blob is not masked wholesale — variable names are the useful half. An unparseable blob *is* masked wholesale rather than passed through. |
+| `compose_yaml` | Assignment lines (`- NAME=value` and `NAME: value`) whose name matches `isSecretName()` are masked, without tracking YAML block structure. |
+| `value` when the sibling `is_secret` is `true` | Masked. Global env vars are only secret when flagged, and masking the rest would hide image tags, ports and hostnames. |
+| anything in `SECRET_FIELDS` | Masked at any nesting depth, in objects and arrays alike. |
+
+`isSecretName()` matches password/secret/token/key/credential/dsn shapes but **excludes names
+ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`, `_issuer`** — `TOKEN_URL` and
+`AUTH_URL` are addresses, not credentials, and masking them makes an SSO misconfiguration much
+harder to diagnose.
+
+**Why this repo needs it more than the others:** this MCP authenticates as a Lattice **admin**,
+and `lattice-api` only masks global env vars server-side *for non-admin callers*
+(`HandleGlobalEnvVars.router.go`). Before masking, `lattice_list_env_vars` returned every
+`is_secret` value in plaintext despite its own description claiming otherwise.
+
+`LATTICE_ALLOW_SECRET_VALUES=1` disables masking entirely — for the cases where you genuinely
+need a working credential (`lattice_reveal_database_credentials`, the token-creation tools).
+It is off by default and should stay that way.
+
 ## Domain & architecture
 
 **Auth.** A single long-lived bearer token (`LATTICE_API_TOKEN`) from
@@ -126,7 +160,7 @@ exits immediately if either is missing. In practice these come from the `env` bl
 
 **Tool groups**, in file order:
 
-The counts below sum to **126**, matching the header and `grep -c 'server.tool(' index.js`. The
+The counts below sum to **133**, matching the header and `grep -c 'server.tool(' index.js`. The
 first rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner comment);
 every bolded row corresponds to a `// ───` banner group and matches its exact in-file name.
 
@@ -139,7 +173,8 @@ every bolded row corresponds to a `// ───` banner group and matches its ex
 | Deployments | 4 | list/get/logs, rollback. (`lattice_approve_deployment` is *not* here — it lives under **Stacks — lifecycle, compose & deploy tokens**.) |
 | Instance self-update | 2 | `lattice_update_api`, `lattice_update_web` — tell the API/web container to pull its latest image and redeploy itself |
 | Audit & API tokens | 4 | `lattice_get_audit_log`; API token list/create/delete |
-| **Database instances** | **11** | CRUD, `lattice_database_action` (start/stop/restart/remove enum), `lattice_get_database_credentials`, snapshot list/create/restore/delete |
+| **Database instances** | **19** | CRUD, `lattice_database_action` (start/stop/restart/remove enum), `lattice_get_database_connection`, `lattice_reveal_database_credentials`, `lattice_get_database_credentials` (deprecated), `lattice_get_database_events`, `lattice_get_database_logs`, `lattice_get_database_lifecycle_logs`, `lattice_open_database_console`, snapshot list/create/restore/delete |
+| **Worker port allocation** | **1** | `lattice_get_worker_port_availability` — claimed host ports on a worker plus a free suggestion |
 | **Backup destinations** | **6** | list/get/create/update/delete + `lattice_test_backup_destination` |
 | **Registries** | **8** | list/create/update/delete, `lattice_test_registry`, `lattice_test_registry_inline`, `lattice_list_registry_repositories`, `lattice_list_registry_tags` |
 | **Discovery & diagnostics** | **7** | `lattice_search`, `lattice_get_anomalies`, `lattice_get_fleet_metrics`, `lattice_get_versions`, `lattice_refresh_versions`, `lattice_get_container_metrics`, `lattice_get_self` |
@@ -167,6 +202,30 @@ for deploy-drift checks without shelling out to `curl`), and widens two read too
 params the handlers already accept but the tools were dropping: `lattice_get_audit_log` gains
 `user_id` / `action` / `resource_type` / `offset` (answer "who deleted stack X" server-side instead
 of scanning 50 rows), and `lattice_get_container_logs` gains `offset` / `worker_id`. Tool count 125 → 126.
+
+**1.2.0** covers the managed-database overhaul in `lattice-api`. Tool count 126 → 133.
+
+New: `lattice_get_database_connection` (host/port/database/username, no secrets),
+`lattice_reveal_database_credentials` (`POST .../reveal` — audited, root only when `include_root`
+is set), `lattice_get_database_events` (**the first thing to reach for when a database is in an
+unexpected state** — the lifecycle history explains how it got there), `lattice_get_database_logs`,
+`lattice_get_database_lifecycle_logs`, `lattice_open_database_console`, and
+`lattice_get_worker_port_availability`.
+
+It also fixes two long-standing request-shape bugs verified against the handlers, both of the exact
+kind this repo's rules warn about:
+
+- `memory_limit` was documented as **bytes**. The API takes **megabytes** and multiplies before
+  sending to the worker, so any agent that followed the description passed a value roughly a
+  million times too small — and Docker rejects any limit under 6MB, so the create failed.
+- `status` was a free string whose description advertised `creating`, which is not a value the
+  platform has ever used. It is now an enum matching `structs.DatabaseStatus`
+  (`pending`/`provisioning`/`running`/`stopped`/`restarting`/`degraded`/`deleting`/`error`), as is
+  `health_status`. The API now rejects anything else with a 400.
+
+`lattice_create_database_instance`'s `port` is now documented as optional-and-preferably-omitted:
+the API allocates a free port from 20000-29999 and returns 409 naming the conflict if you pin one
+that is taken.
 
 **Consolidations.** Where `lattice-api` exposes several paths served by one handler, this repo
 exposes one tool with an enum rather than N tools. `lattice_database_action` covers
@@ -204,8 +263,11 @@ predate this convention and remain separate tools.
 
 - **Never hardcode a token, URL or hostname.** Everything comes from env.
 - **Never log request or response bodies.** Responses routinely contain env vars, registry
-  credentials and database passwords. `lattice_get_database_credentials` returns live secrets
-  by design — do not add convenience logging anywhere in `api()`.
+  credentials and database passwords — do not add convenience logging anywhere in `api()`.
+- **Never weaken `sanitise()`.** It must stay recursive, applied centrally in `api()`, and on by
+  default. Masking is the only thing standing between an admin token's responses and a
+  permanent transcript. If a tool needs real values, the answer is
+  `LATTICE_ALLOW_SECRET_VALUES=1` in that server's env, not an exemption in the code.
 - **Never add a tool without reading its handler in `lattice-api`.** Inferring a request shape
   from a struct has produced real, shipped bugs across this family of servers.
 - **Do not break tool names.** They are a public contract: renaming one silently breaks any
@@ -236,6 +298,12 @@ Then the stdio handshake from *Running, building & testing* above, asserting:
 For any tool you added or changed, make **one real call against the live API** and confirm the
 response shape. Schema-only verification is not enough: it catches typos, not wrong units,
 wrong enum values, or parameters the handler ignores.
+
+**If you touched `api()`, `sanitise()`, `mask()` or the field lists**, re-verify masking: run a
+nested fixture (objects inside arrays inside objects, an `env_vars` blob, a `compose_yaml`
+string) through `sanitise()` and assert no live value survives at any depth. `npm test` checks
+statically that `api()` still calls `sanitise()`, but it cannot check that the field lists are
+still right.
 
 **Never report work complete on the strength of `tools/list` alone.**
 
