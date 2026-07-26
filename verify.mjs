@@ -15,6 +15,9 @@
  *    already shipped a release where the MCP lagged the API by two months; the
  *    documented count is the cheapest tripwire for that.
  *  - Tools not following the lattice_ prefix, which the client relies on.
+ *  - sanitise() being unwired from api(). Masking is applied in exactly one
+ *    place; removing that call leaves every tool working and every response
+ *    leaking, which no other check would notice.
  */
 
 import { readFileSync } from "node:fs";
@@ -82,6 +85,22 @@ if (undocumented.length > 0) {
     fail(`tools missing from the README tool tables: ${undocumented.join(", ")}`);
 }
 
+// ── Secret masking ───────────────────────────────────────────────────────────
+// sanitise() is the only thing keeping env vars, database passwords and freshly
+// minted tokens out of a transcript, and it works by being applied centrally in
+// api(). Unwiring that one call is a silent, total regression — every tool keeps
+// working and every response starts leaking. This is the tripwire for it.
+if (!/return sanitise\(JSON\.parse\(raw\)\)/.test(source)) {
+    fail("api() no longer passes its parsed response through sanitise() — every tool now leaks secrets");
+}
+if (!/function sanitise\(/.test(source) || !/function mask\(/.test(source)) {
+    fail("sanitise()/mask() are missing from index.js");
+}
+// The masking must default to on; only an explicit opt-in env var disables it.
+if (!/const ALLOW_SECRETS = process\.env\.LATTICE_ALLOW_SECRET_VALUES === "1"/.test(source)) {
+    fail("the masking opt-out is not the expected LATTICE_ALLOW_SECRET_VALUES === \"1\" check — masking may no longer default to on");
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 if (failures.length > 0) {
     console.error("verification failed:\n");
@@ -93,3 +112,4 @@ console.log(`✓ index.js parses`);
 console.log(`✓ ${toolCount} tools registered, no duplicates, all lattice_-prefixed`);
 console.log(`✓ README.md and AGENTS.md agree on the tool count`);
 console.log(`✓ every tool appears in the README tool tables`);
+console.log(`✓ sanitise() is wired into api() and masking defaults to on`);
