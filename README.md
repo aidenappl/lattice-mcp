@@ -74,6 +74,28 @@ Restart Claude Code after setup so the new server and tools are picked up.
 |----------|----------|-------------|
 | `LATTICE_API_URL` | Yes | Lattice API base URL |
 | `LATTICE_API_TOKEN` | Yes | Bearer token for authentication (sent on every request) |
+| `LATTICE_ALLOW_SECRET_VALUES` | No | Set to `1` to disable secret masking in responses |
+
+## Secret values are masked
+
+Every response is passed through a masking step before it reaches the model. Anything that looks
+like a credential keeps its **first two characters** and loses the rest to a fixed-width tail —
+`supersecret` becomes `su**********`.
+
+That is enough to tell two credentials apart, or to confirm a rotation actually changed
+something, and not enough to use. The tail is a fixed width so the mask does not reveal the real
+length.
+
+This covers container and stack `env_vars`, `compose_yaml` environment blocks, global env vars
+flagged `is_secret`, database passwords, and freshly minted deploy/worker/API tokens. Variable
+*names* are left readable — they are the useful half — as are addresses like `TOKEN_URL` and
+`AUTH_URL`.
+
+This server authenticates as a Lattice **admin**, and the API only masks global env vars
+server-side for *non-admin* callers. Without this step, `lattice_list_env_vars` returns every
+secret value in plaintext.
+
+Set `LATTICE_ALLOW_SECRET_VALUES=1` to turn masking off if you genuinely need a working value.
 
 ## Development
 
