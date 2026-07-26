@@ -2,7 +2,7 @@
 
 > `lattice-mcp` is the **Model Context Protocol server for Lattice**, the container
 > orchestration platform that runs every `appleby.cloud` service. It exposes the
-> `lattice-api` admin surface to Claude Code as **125 typed tools** — workers, stacks,
+> `lattice-api` admin surface to Claude Code as **126 typed tools** — workers, stacks,
 > containers, deployments, databases, registries, networks, volumes and instance config.
 > This file orients any agent/worker before touching code in this repo.
 >
@@ -42,7 +42,7 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 
 | Path | Role |
 |------|------|
-| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 125 `server.tool(...)` registrations, transport connect. |
+| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 126 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata. `bin.lattice-mcp` → `index.js`, so `npx lattice-mcp` works. |
 | `README.md` | User-facing setup + full tool table. |
 | `AGENTS.md` | This file. |
@@ -126,13 +126,13 @@ exits immediately if either is missing. In practice these come from the `env` bl
 
 **Tool groups**, in file order:
 
-The counts below sum to **125**, matching the header and `grep -c 'server.tool(' index.js`. The
-first six rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner comment);
+The counts below sum to **126**, matching the header and `grep -c 'server.tool(' index.js`. The
+first rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner comment);
 every bolded row corresponds to a `// ───` banner group and matches its exact in-file name.
 
 | Group | Tools | Notes |
 |-------|-------|-------|
-| Overview & health | 2 | `lattice_overview`, `lattice_health` |
+| Overview & health | 3 | `lattice_overview`, `lattice_health`, `lattice_get_version` |
 | Workers | 3 + 4 actions | list/get/metrics; reboot, upgrade, stop-all, start-all |
 | Stacks | 2 + 5 actions | list/get; deploy, restart, stop, start, update |
 | Containers | 4 + 8 actions | list/get/logs/lifecycle; start, stop, restart, kill, pause, unpause, remove, recreate. (`lattice_get_container_metrics` is *not* here — it lives under **Discovery & diagnostics**.) |
@@ -161,6 +161,12 @@ the JSON body (`HandleForceRemoveContainer` reads it there, not from query param
 always 400'd); and `lattice_test_backup_destination` now marks `worker_id` as **required** (a query
 param the handler 400s without — the test dispatches over the worker's WebSocket). It also hardens
 `api()` against non-JSON responses (see *How code is written here*) and declares `zod` explicitly.
+
+**1.1.2** adds `lattice_get_version` (`GET /version`, so agents can read the deployed API version
+for deploy-drift checks without shelling out to `curl`), and widens two read tools to pass filter
+params the handlers already accept but the tools were dropping: `lattice_get_audit_log` gains
+`user_id` / `action` / `resource_type` / `offset` (answer "who deleted stack X" server-side instead
+of scanning 50 rows), and `lattice_get_container_logs` gains `offset` / `worker_id`. Tool count 125 → 126.
 
 **Consolidations.** Where `lattice-api` exposes several paths served by one handler, this repo
 exposes one tool with an enum rather than N tools. `lattice_database_action` covers

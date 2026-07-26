@@ -114,7 +114,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.1.1",
+    version: "1.1.2",
 });
 
 // Overview
@@ -126,6 +126,12 @@ server.tool("lattice_overview", "Get fleet overview: worker counts, stack counts
 // Healthcheck
 server.tool("lattice_health", "Check API health and database connectivity", {}, async () => {
     const res = await api("GET", "/healthcheck");
+    return { content: text(res) };
+});
+
+// Version
+server.tool("lattice_get_version", "Get the deployed lattice-api version string. Use to check deploy drift against GitHub tags/commits (e.g. for /howfarbehind).", {}, async () => {
+    const res = await api("GET", "/version");
     return { content: text(res) };
 });
 
@@ -189,9 +195,11 @@ server.tool("lattice_get_container", "Get full container details including confi
 server.tool("lattice_get_container_logs", "Get recent container logs (stdout/stderr)", {
     id: z.number().describe("Container ID"),
     limit: z.number().optional().describe("Number of log lines (default 50)"),
+    offset: z.number().optional().describe("Skip this many lines — paginate past the tail into older logs"),
     stream: z.enum(["stdout", "stderr"]).optional().describe("Filter by stream"),
-}, async ({ id, limit, stream }) => {
-    const res = await api("GET", `/admin/containers/${id}/logs`, { limit, stream });
+    worker_id: z.number().optional().describe("Filter by worker ID"),
+}, async ({ id, limit, offset, stream, worker_id }) => {
+    const res = await api("GET", `/admin/containers/${id}/logs`, { limit, offset, stream, worker_id });
     return { content: text(res) };
 });
 
@@ -228,10 +236,14 @@ server.tool("lattice_get_deployment_logs", "Get deployment logs: pull, create, s
 });
 
 // Audit log
-server.tool("lattice_get_audit_log", "Get recent audit log entries (who did what, when)", {
+server.tool("lattice_get_audit_log", "Get recent audit log entries (who did what, when). Filter by user, action, or resource type to answer 'who deleted X' without scanning.", {
     limit: z.number().optional().describe("Number of entries (default 50)"),
-}, async ({ limit }) => {
-    const res = await api("GET", "/admin/audit-log", { limit });
+    offset: z.number().optional().describe("Skip this many entries for pagination"),
+    user_id: z.number().optional().describe("Filter by the user who performed the action"),
+    action: z.string().optional().describe("Filter by action (e.g. create, update, delete, deploy)"),
+    resource_type: z.string().optional().describe("Filter by resource type (e.g. stack, container, worker, registry)"),
+}, async ({ limit, offset, user_id, action, resource_type }) => {
+    const res = await api("GET", "/admin/audit-log", { limit, offset, user_id, action, resource_type });
     return { content: text(res) };
 });
 
