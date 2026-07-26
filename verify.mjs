@@ -85,6 +85,30 @@ if (undocumented.length > 0) {
     fail(`tools missing from the README tool tables: ${undocumented.join(", ")}`);
 }
 
+// ── Version consistency ──────────────────────────────────────────────────────
+// The version lives in two places: package.json and the McpServer declaration.
+// They drift silently — nothing reads both — and the failure surfaces only at
+// `npm publish`, as "cannot publish over the previously published versions",
+// after the release has already been tagged and pushed.
+const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+const serverVersion = source.match(/new McpServer\(\{[^}]*version:\s*"([^"]+)"/s)?.[1];
+
+if (!serverVersion) {
+    fail("could not find the McpServer version declaration in index.js");
+} else if (serverVersion !== pkg.version) {
+    fail(
+        `version mismatch: package.json is ${pkg.version} but index.js declares ${serverVersion} — ` +
+            `bump both`,
+    );
+}
+
+// AGENTS.md documents each release; a bump with no matching entry means the
+// release notes are already behind.
+const agents = readFileSync("AGENTS.md", "utf8");
+if (pkg.version && !agents.includes(`**${pkg.version}**`)) {
+    fail(`AGENTS.md has no "**${pkg.version}**" release entry — document the release in the same change`);
+}
+
 // ── Secret masking ───────────────────────────────────────────────────────────
 // sanitise() is the only thing keeping env vars, database passwords and freshly
 // minted tokens out of a transcript, and it works by being applied centrally in
@@ -109,6 +133,7 @@ if (failures.length > 0) {
 }
 
 console.log(`✓ index.js parses`);
+console.log(`✓ version ${pkg.version} consistent across package.json, index.js and AGENTS.md`);
 console.log(`✓ ${toolCount} tools registered, no duplicates, all lattice_-prefixed`);
 console.log(`✓ README.md and AGENTS.md agree on the tool count`);
 console.log(`✓ every tool appears in the README tool tables`);

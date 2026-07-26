@@ -221,7 +221,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.1.2",
+    version: "1.2.0",
 });
 
 // Overview
