@@ -227,6 +227,28 @@ kind this repo's rules warn about:
 the API allocates a free port from 20000-29999 and returns 409 naming the conflict if you pin one
 that is taken.
 
+**1.3.0** masks secrets in every response. No tool count change (133).
+
+`api()` now passes every decoded response through `sanitise()` before returning it — see
+*Sensitive value masking* under *How code is written here* for the rules. This closes a real leak
+rather than a theoretical one: this MCP authenticates as a Lattice **admin**, and `lattice-api`
+only masks global env vars server-side for *non-admin* callers
+(`HandleGlobalEnvVars.router.go:39`), so `lattice_list_env_vars` was returning every `is_secret`
+value in plaintext — while its own description claimed they were masked. Container and stack
+`env_vars`, `compose_yaml` environment blocks, database passwords and freshly minted
+deploy/worker/API tokens were all reaching the transcript verbatim too.
+
+Masked values keep their **first two characters** and get a fixed-width tail
+(`"supersecret"` → `"su**********"`), so they stay comparable without staying usable. Set
+`LATTICE_ALLOW_SECRET_VALUES=1` to opt out.
+
+Three tool descriptions changed to match reality: `lattice_list_env_vars` (which was lying),
+`lattice_reveal_database_credentials`, `lattice_create_deploy_token` and
+`lattice_create_worker_token` now each say the value comes back masked and where to get the real
+one. `verify.mjs` gained a tripwire asserting `sanitise()` is still wired into `api()` and still
+defaults to on — unwiring that single call is a silent, total regression that no other check
+would notice.
+
 **Consolidations.** Where `lattice-api` exposes several paths served by one handler, this repo
 exposes one tool with an enum rather than N tools. `lattice_database_action` covers
 `/start`, `/stop`, `/restart` and `/remove`. Worker actions are the historical exception — they
