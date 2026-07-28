@@ -497,13 +497,19 @@ server.tool("lattice_start_all_worker", "Start all containers on a worker", {
 });
 
 // Dashboard controls
-server.tool("lattice_update_api", "Trigger Lattice API self-update", {}, async () => {
-    const res = await api("POST", "/admin/update/api");
+server.tool("lattice_update_api", "Update the Lattice API container. Pass `version` to deploy or roll back to a specific tag; omit it to take whatever the compose file resolves to. Returns 'already up to date' without restarting when the resolved image is the one already running", {
+    version: z.string().optional().describe("Image tag to deploy, e.g. v1.3.21. Written to the compose env file, so it persists across restarts. Omit to follow the existing tag"),
+    force: z.boolean().optional().describe("Recreate even when the image is unchanged — use after an environment-variable change"),
+}, async ({ version, force }) => {
+    const res = await api("POST", "/admin/update/api", force ? { force: "true" } : null, body({ version }));
     return { content: text(res) };
 });
 
-server.tool("lattice_update_web", "Trigger Lattice web container update", {}, async () => {
-    const res = await api("POST", "/admin/update/web");
+server.tool("lattice_update_web", "Update the Lattice web container. Pass `version` to deploy or roll back to a specific tag; omit it to take whatever the compose file resolves to", {
+    version: z.string().optional().describe("Image tag to deploy, e.g. v1.3.25. Written to the compose env file, so it persists across restarts. Omit to follow the existing tag"),
+    force: z.boolean().optional().describe("Recreate even when the image is unchanged"),
+}, async ({ version, force }) => {
+    const res = await api("POST", "/admin/update/web", force ? { force: "true" } : null, body({ version }));
     return { content: text(res) };
 });
 
