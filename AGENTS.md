@@ -249,6 +249,20 @@ one. `verify.mjs` gained a tripwire asserting `sanitise()` is still wired into `
 defaults to on — unwiring that single call is a silent, total regression that no other check
 would notice.
 
+**1.4.0** exposes parameters added to `lattice-api` alongside the managed-database overhaul. No
+tool-count change.
+
+`lattice_create_database_instance` gains `adopt_existing_volume`. It is off by default because a
+reused data volume makes the engine skip initialisation and keep its previous credentials while the
+API records freshly generated ones — the container reports healthy and nothing looks wrong until a
+connection fails.
+
+`lattice_update_api` and `lattice_update_web` gain `version` and `force`. The compose file
+interpolates the image tag from an env var, so passing `version` writes it to the compose env file
+and deploys or rolls back that tag in one call, persisting across restarts. Requesting a version
+when the compose file does not interpolate the variable returns a 400 rather than silently
+deploying the old image.
+
 **Consolidations.** Where `lattice-api` exposes several paths served by one handler, this repo
 exposes one tool with an enum rather than N tools. `lattice_database_action` covers
 `/start`, `/stop`, `/restart` and `/remove`. Worker actions are the historical exception — they
