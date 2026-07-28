@@ -575,6 +575,7 @@ server.tool("lattice_create_database_instance", "Provision a database instance o
     snapshot_schedule: z.string().optional().describe("Cron expression for automatic snapshots"),
     retention_count: z.number().optional().describe("How many automatic snapshots to keep"),
     backup_destination_id: z.number().optional().describe("Backup destination for snapshots"),
+    adopt_existing_volume: z.boolean().optional().describe("Reuse a leftover data volume of the same name. Off by default — the engine skips initialisation when its data directory is non-empty, so it keeps its OLD credentials while the API records the new ones, and nothing looks wrong until a connection fails"),
 }, async (args) => {
     const res = await api("POST", "/admin/database-instances", null, body(args));
     return { content: text(res) };
