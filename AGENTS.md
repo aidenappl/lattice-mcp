@@ -268,6 +268,13 @@ exposes one tool with an enum rather than N tools. `lattice_database_action` cov
 `/start`, `/stop`, `/restart` and `/remove`. Worker actions are the historical exception — they
 predate this convention and remain separate tools.
 
+**`remove` and delete are not the same operation, and the tool descriptions have to say so.**
+`lattice_database_action("remove")` destroys a database's container and **keeps** its data volume;
+`lattice_delete_database_instance` destroys the volume too and is irreversible except via snapshots.
+The latter is asynchronous — the instance sits in `deleting` until the worker confirms — and returns
+**409** when the worker is offline, which `force: true` overrides at the price of abandoning the
+container and volume on disk.
+
 ## Ecosystem & related repos
 
 | Repo | Relationship |

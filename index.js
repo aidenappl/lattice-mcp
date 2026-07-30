@@ -606,14 +606,15 @@ server.tool("lattice_update_database_instance", "Update a database instance's co
     return { content: text(res) };
 });
 
-server.tool("lattice_delete_database_instance", "Delete a database instance record. Destructive — data is lost unless a snapshot exists. Check lattice_list_database_snapshots first", {
+server.tool("lattice_delete_database_instance", "Permanently destroy a database: its container AND its data volume are removed on the worker, then the record is retired once the worker confirms. Irreversible — every table is gone; only existing snapshots survive, so check lattice_list_database_snapshots first. Asynchronous: the instance sits in 'deleting' until the worker confirms, and a failed teardown leaves it in 'error' rather than disappearing. Returns 409 if the worker is offline, since nothing can be destroyed then — pass force to retire the record anyway and abandon the container and volume on disk. To keep the data, use lattice_database_action with 'remove' instead", {
     id: z.number().describe("Database instance ID"),
-}, async ({ id }) => {
-    const res = await api("DELETE", `/admin/database-instances/${id}`);
+    force: z.boolean().optional().describe("Retire the record even though the worker is offline, abandoning its container and data volume on the worker (default false)"),
+}, async ({ id, force }) => {
+    const res = await api("DELETE", `/admin/database-instances/${id}${force ? "?force=true" : ""}`);
     return { content: text(res) };
 });
 
-server.tool("lattice_database_action", "Start, stop, restart or remove a database instance's container. 'remove' destroys the container — data survives only if the volume or a snapshot does", {
+server.tool("lattice_database_action", "Start, stop, restart or remove a database instance's container. 'remove' destroys the container but KEEPS the data volume and the record, so the database can be started again with its data — it is not a delete, and is idempotent on an already-removed container. Use lattice_delete_database_instance to destroy the data too", {
     id: z.number().describe("Database instance ID"),
     action: z.enum(["start", "stop", "restart", "remove"]).describe("Action to perform"),
 }, async ({ id, action }) => {

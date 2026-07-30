@@ -186,8 +186,8 @@ All 133 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | `lattice_get_database_instance` | Full instance config |
 | `lattice_create_database_instance` | Provision mysql/mariadb/postgres on a worker (omit `port` to auto-allocate) |
 | `lattice_update_database_instance` | Update config, limits, snapshot schedule |
-| `lattice_delete_database_instance` | Delete an instance ⚠️ |
-| `lattice_database_action` | start / stop / restart / remove ⚠️ |
+| `lattice_delete_database_instance` | Destroy an instance **and its data volume** ⚠️ — async; `force` only for an offline worker |
+| `lattice_database_action` | start / stop / restart / remove ⚠️ — `remove` is container-only, the data volume survives |
 | `lattice_get_database_connection` | Host, port, database and username — no secrets |
 | `lattice_reveal_database_credentials` | Reveal live credentials (audited; root only on request) |
 | `lattice_get_database_credentials` | **Deprecated** — root credentials via GET; use the reveal tool |
