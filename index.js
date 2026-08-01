@@ -600,6 +600,7 @@ server.tool("lattice_update_database_instance", "Update a database instance's co
     snapshot_schedule: z.string().optional().describe("5-field cron expression for automatic snapshots, evaluated on the worker. Requires backup_destination_id — a schedule with no destination is rejected, because the control plane only registers schedules that have somewhere to write and it would otherwise save and never run"),
     retention_count: z.number().optional(),
     backup_destination_id: z.number().optional(),
+    mirror_backup_destination_id: z.number().optional().describe("Second destination each snapshot is copied to after the primary succeeds. An off-site mirror is what satisfies the '1' in 3-2-1; a mirror failure degrades backup posture without failing the backup"),
     active: z.boolean().optional(),
     deletion_protection: z.boolean().optional().describe("Refuse any delete of this database while true, including a forced one"),
 }, async ({ id, ...fields }) => {
