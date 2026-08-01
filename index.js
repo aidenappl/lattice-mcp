@@ -601,6 +601,7 @@ server.tool("lattice_update_database_instance", "Update a database instance's co
     retention_count: z.number().optional(),
     backup_destination_id: z.number().optional(),
     active: z.boolean().optional(),
+    deletion_protection: z.boolean().optional().describe("Refuse any delete of this database while true, including a forced one"),
 }, async ({ id, ...fields }) => {
     const res = await api("PUT", `/admin/database-instances/${id}`, null, body(fields));
     return { content: text(res) };
@@ -608,9 +609,11 @@ server.tool("lattice_update_database_instance", "Update a database instance's co
 
 server.tool("lattice_delete_database_instance", "Permanently destroy a database: its container AND its data volume are removed on the worker, then the record is retired once the worker confirms. Irreversible — every table is gone; only existing snapshots survive, so check lattice_list_database_snapshots first. Asynchronous: the instance sits in 'deleting' until the worker confirms, and a failed teardown leaves it in 'error' rather than disappearing. Returns 409 if the worker is offline, since nothing can be destroyed then — pass force to retire the record anyway and abandon the container and volume on disk. To keep the data, use lattice_database_action with 'remove' instead", {
     id: z.number().describe("Database instance ID"),
-    force: z.boolean().optional().describe("Retire the record even though the worker is offline, abandoning its container and data volume on the worker (default false)"),
-}, async ({ id, force }) => {
-    const res = await api("DELETE", `/admin/database-instances/${id}${force ? "?force=true" : ""}`);
+    force: z.boolean().optional().describe("Retire the record even though the worker is offline, abandoning its container and data volume on the worker (default false). Does NOT override deletion protection"),
+    final_snapshot: z.boolean().optional().describe("Take one last snapshot first and destroy the database only once it completes. Returns with the database still present; a failed snapshot means nothing is deleted. Requires a backup destination and a running instance"),
+}, async ({ id, force, final_snapshot }) => {
+    const qs = [force ? "force=true" : null, final_snapshot ? "final_snapshot=true" : null].filter(Boolean).join("&");
+    const res = await api("DELETE", `/admin/database-instances/${id}${qs ? `?${qs}` : ""}`);
     return { content: text(res) };
 });
 
@@ -650,6 +653,15 @@ server.tool("lattice_get_database_events", "Get a database instance's lifecycle 
     limit: z.number().optional().describe("Max events to return"),
 }, async ({ id, ...params }) => {
     const res = await api("GET", `/admin/database-instances/${id}/events`, params);
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_database_metrics", "Get CPU and memory samples for a managed database instance. These samples were always collected but had no read path: managed databases have no row in the containers table, and every other metrics reader takes a container id. Use this rather than lattice_get_container_metrics for a database", {
+    id: z.number().describe("Database instance ID"),
+    limit: z.number().optional().describe("Max samples, newest first (default 50, max 500)"),
+    since: z.string().optional().describe("RFC3339 timestamp — only samples at or after this time"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/metrics`, params);
     return { content: text(res) };
 });
 
