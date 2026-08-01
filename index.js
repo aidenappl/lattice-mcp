@@ -656,6 +656,13 @@ server.tool("lattice_get_database_events", "Get a database instance's lifecycle 
     return { content: text(res) };
 });
 
+server.tool("lattice_get_database_backup_posture", "A database's standing against the 3-2-1 rule (three copies, two media, one off-site). Reports what is TRUE rather than what was configured: a destination that has produced no fresh snapshot is not a copy, and one whose locality nobody confirmed is never counted as off-site — Lattice cannot tell a bucket on the worker being backed up from one in another country. Returns per-axis pass/fail, detail lines and warnings", {
+    id: z.number().describe("Database instance ID"),
+}, async ({ id }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/backup-posture`);
+    return { content: text(res) };
+});
+
 server.tool("lattice_get_database_runs", "Recent scheduled-snapshot attempts for a database, newest first — INCLUDING slots that were skipped and why. Scheduling lives in the control plane, so every slot leaves a row whether or not it produced a snapshot. Reach for this to answer 'did the backup run?', which lattice_list_database_snapshots cannot: an absent snapshot is a mystery, a skipped run states its reason (previous run still going, database stopped, worker offline, slot beyond the catch-up window)", {
     id: z.number().describe("Database instance ID"),
     limit: z.number().optional().describe("Max runs to return, newest first (default 50, max 500)"),
