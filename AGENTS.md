@@ -249,6 +249,27 @@ one. `verify.mjs` gained a tripwire asserting `sanitise()` is still wired into `
 defaults to on — unwiring that single call is a silent, total regression that no other check
 would notice.
 
+**1.5.0** exposes the durability work that landed in `lattice-api` v1.3.27–v1.3.30. Three new
+tools, 133 → 136.
+
+`lattice_get_database_metrics` reads CPU/memory samples addressed by instance. Those samples were
+always collected but had no read path: a managed database has no row in the `containers` table, and
+every other metrics reader takes a container id.
+
+`lattice_get_database_runs` answers "did the backup run?", which the snapshot list cannot. Scheduling
+moved into the control plane, so every slot leaves a row whether or not it produced a snapshot — an
+absent snapshot is a mystery, while a skipped run states its reason. This is not a hypothetical
+convenience: the first production run of the new scheduler skipped four consecutive slots, and the
+diagnosis came from these rows rather than from reading code.
+
+`lattice_get_database_backup_posture` scores a database against 3-2-1 and is deliberately
+conservative — an unconfirmed destination locality is never counted as off-site, because Lattice
+cannot tell a bucket on the worker being backed up from one in another country.
+
+Parameters added: `locality` on backup destinations, `mirror_backup_destination_id` and
+`deletion_protection` on database update, `final_snapshot` on delete. The delete tool's `force`
+description now also states what force does *not* do — it does not override deletion protection.
+
 **1.4.0** exposes parameters added to `lattice-api` alongside the managed-database overhaul. No
 tool-count change.
 
