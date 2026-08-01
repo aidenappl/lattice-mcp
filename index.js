@@ -656,6 +656,14 @@ server.tool("lattice_get_database_events", "Get a database instance's lifecycle 
     return { content: text(res) };
 });
 
+server.tool("lattice_get_database_runs", "Recent scheduled-snapshot attempts for a database, newest first — INCLUDING slots that were skipped and why. Scheduling lives in the control plane, so every slot leaves a row whether or not it produced a snapshot. Reach for this to answer 'did the backup run?', which lattice_list_database_snapshots cannot: an absent snapshot is a mystery, a skipped run states its reason (previous run still going, database stopped, worker offline, slot beyond the catch-up window)", {
+    id: z.number().describe("Database instance ID"),
+    limit: z.number().optional().describe("Max runs to return, newest first (default 50, max 500)"),
+}, async ({ id, ...params }) => {
+    const res = await api("GET", `/admin/database-instances/${id}/runs`, params);
+    return { content: text(res) };
+});
+
 server.tool("lattice_get_database_metrics", "Get CPU and memory samples for a managed database instance. These samples were always collected but had no read path: managed databases have no row in the containers table, and every other metrics reader takes a container id. Use this rather than lattice_get_container_metrics for a database", {
     id: z.number().describe("Database instance ID"),
     limit: z.number().optional().describe("Max samples, newest first (default 50, max 500)"),

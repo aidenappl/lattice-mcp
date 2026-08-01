@@ -2,7 +2,7 @@
 
 > `lattice-mcp` is the **Model Context Protocol server for Lattice**, the container
 > orchestration platform that runs every `appleby.cloud` service. It exposes the
-> `lattice-api` admin surface to Claude Code as **134 typed tools** — workers, stacks,
+> `lattice-api` admin surface to Claude Code as **135 typed tools** — workers, stacks,
 > containers, deployments, databases, registries, networks, volumes and instance config.
 > This file orients any agent/worker before touching code in this repo.
 >
@@ -42,7 +42,7 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 
 | Path | Role |
 |------|------|
-| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 134 `server.tool(...)` registrations, transport connect. |
+| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 135 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata. `bin.lattice-mcp` → `index.js`, so `npx lattice-mcp` works. |
 | `README.md` | User-facing setup + full tool table. |
 | `AGENTS.md` | This file. |
@@ -173,7 +173,7 @@ every bolded row corresponds to a `// ───` banner group and matches its ex
 | Deployments | 4 | list/get/logs, rollback. (`lattice_approve_deployment` is *not* here — it lives under **Stacks — lifecycle, compose & deploy tokens**.) |
 | Instance self-update | 2 | `lattice_update_api`, `lattice_update_web` — tell the API/web container to pull its latest image and redeploy itself |
 | Audit & API tokens | 4 | `lattice_get_audit_log`; API token list/create/delete |
-| **Database instances** | **20** | CRUD, `lattice_database_action` (start/stop/restart/remove enum), `lattice_get_database_connection`, `lattice_reveal_database_credentials`, `lattice_get_database_credentials` (deprecated), `lattice_get_database_events`, `lattice_get_database_logs`, `lattice_get_database_lifecycle_logs`, `lattice_get_database_metrics`, `lattice_open_database_console`, snapshot list/create/restore/delete |
+| **Database instances** | **21** | CRUD, `lattice_database_action` (start/stop/restart/remove enum), `lattice_get_database_connection`, `lattice_reveal_database_credentials`, `lattice_get_database_credentials` (deprecated), `lattice_get_database_events`, `lattice_get_database_logs`, `lattice_get_database_lifecycle_logs`, `lattice_get_database_metrics`, `lattice_get_database_runs`, `lattice_open_database_console`, snapshot list/create/restore/delete |
 | **Worker port allocation** | **1** | `lattice_get_worker_port_availability` — claimed host ports on a worker plus a free suggestion |
 | **Backup destinations** | **6** | list/get/create/update/delete + `lattice_test_backup_destination` |
 | **Registries** | **8** | list/create/update/delete, `lattice_test_registry`, `lattice_test_registry_inline`, `lattice_list_registry_repositories`, `lattice_list_registry_tags` |
