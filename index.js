@@ -90,7 +90,45 @@ const SECRET_FIELDS = new Set([
     "secret_access_key", "access_key", "access_key_id", "token", "api_token",
     "admin_token", "deploy_token", "worker_token", "plaintext", "private_key",
     "encryption_key", "signing_key", "connection_string", "dsn",
+    // An automation's webhook secret, and the path that embeds it — either one
+    // is the whole credential for firing the automation.
+    "webhook_token", "webhook_path",
 ]);
+
+// An automation's http_request step is an outbound request someone wrote, and
+// its credentials live in three places: header values (Authorization,
+// X-Api-Key, …), the body, and — for Slack/Discord-style hooks — the URL path
+// itself. lattice-api returns all three to an admin, and this MCP is an admin.
+// The method, the host and the header NAMES stay readable, because those are
+// what a diagnosis needs.
+const BENIGN_HEADERS = new Set(["content-type", "accept", "user-agent"]);
+
+function maskUrlPath(raw) {
+    if (typeof raw !== "string" || raw === "") return raw;
+    try {
+        const u = new URL(raw);
+        const rest = raw.slice(u.origin.length);
+        return rest && rest !== "/" ? u.origin + mask(rest) : raw;
+    } catch {
+        return mask(raw);
+    }
+}
+
+function maskHttpRequestConfig(cfg) {
+    const out = sanitise(cfg);
+    if (out === null || typeof out !== "object" || Array.isArray(out)) return out;
+    if (typeof out.url === "string") out.url = maskUrlPath(out.url);
+    if (out.headers && typeof out.headers === "object" && !Array.isArray(out.headers)) {
+        out.headers = Object.fromEntries(
+            Object.entries(out.headers).map(([name, value]) => [
+                name,
+                BENIGN_HEADERS.has(name.toLowerCase()) ? value : mask(value),
+            ]),
+        );
+    }
+    if (typeof out.body === "string") out.body = mask(out.body);
+    return out;
+}
 
 // Env-var and compose keys are free-form, so they are matched by shape rather
 // than by name. The `_url`/`_uri`/`_endpoint` exclusion keeps TOKEN_URL and
@@ -151,6 +189,8 @@ function sanitise(node) {
             out[k] = maskEnvBlob(v);
         } else if (k === "compose_yaml") {
             out[k] = maskComposeYAML(v);
+        } else if (k === "config" && node.type === "http_request") {
+            out[k] = maskHttpRequestConfig(v);
         } else if (k === "value" && node.is_secret === true) {
             // Global env vars: the value is only a secret when flagged as one,
             // and masking the rest would hide image tags, ports and hostnames.
@@ -166,7 +206,10 @@ function sanitise(node) {
 
 // --- HTTP helper ---
 
-async function api(method, path, params, body) {
+// timeoutMs defaults to 30s. The one caller that raises it is
+// lattice_run_automation: a run is synchronous and bounded by lattice-api's 50s
+// budget, and aborting early would report a failure for a run still going.
+async function api(method, path, params, body, timeoutMs = 30000) {
     const url = new URL(path, API_URL);
     if (params) {
         for (const [k, v] of Object.entries(params)) {
@@ -178,7 +221,7 @@ async function api(method, path, params, body) {
         headers: {
             Authorization: `Bearer ${API_TOKEN}`,
         },
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(timeoutMs),
     };
     if (body) {
         opts.headers["Content-Type"] = "application/json";
@@ -221,7 +264,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.5.0",
+    version: "1.6.0",
 });
 
 // Overview
@@ -1019,6 +1062,134 @@ server.tool("lattice_approve_deployment", "Approve a deployment that is waiting 
     id: z.number().describe("Deployment ID"),
 }, async ({ id }) => {
     const res = await api("POST", `/admin/deployments/${id}/approve`);
+    return { content: text(res) };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Automations
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// An automation is one trigger (webhook or UTC cron) plus ordered steps. It
+// exists because a deploy token is bound to ONE stack: redeploying the same
+// service in two zones needed two tokens, and monitor-core's second zone was
+// silently never redeployed. Request shapes mirror
+// lattice-api routers/HandleAutomations.router.go; the rules they enforce live in
+// lattice-api automations/.
+
+const automationTriggerSchema = z.object({
+    type: z.enum(["webhook", "schedule"]).describe(
+        "webhook: fired by POST /api/automations/<token> — requires the admin role, since the URL is a bearer credential. schedule: a 5-field cron evaluated in UTC",
+    ),
+    cron: z.string().optional().describe(
+        "5-field UTC cron, schedule triggers only, e.g. \"0 3 * * *\". Values that could never fire (minute 60, day-of-week 7) are rejected",
+    ),
+});
+
+const continueOnError = z.boolean().optional().describe(
+    "Run later steps even if this one fails. It changes flow, not the verdict: the run is still marked failed",
+);
+
+const automationActionSchema = z.discriminatedUnion("type", [
+    z.object({
+        type: z.literal("redeploy_container").describe("Recreate (pull image:tag, replace) one container on whichever worker runs its stack. Editor role"),
+        continue_on_error: continueOnError,
+        config: z.object({
+            stack_id: z.number().describe("Stack the container belongs to — lattice_list_stacks"),
+            container_name: z.string().describe(
+                "Container NAME within that stack — lattice_get_stack_containers. A name, not an id: a compose edit re-creates container ids",
+            ),
+        }),
+    }),
+    z.object({
+        type: z.literal("http_request").describe("One outbound HTTP request; succeeds only on a 2xx. Admin role"),
+        continue_on_error: continueOnError,
+        config: z.object({
+            method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
+            url: z.string().describe("HTTPS URL on a public host — private and internal addresses are refused"),
+            headers: z.record(z.string(), z.string()).optional().describe(
+                "Header name → value. Stored in plaintext by lattice-api; this server masks the values in every response",
+            ),
+            body: z.string().optional().describe("Request body; not allowed on GET/HEAD. Content-Type defaults to application/json"),
+            timeout_seconds: z.number().int().min(0).max(30).optional().describe("Per-request timeout, default 10, max 30"),
+        }),
+    }),
+]);
+
+server.tool("lattice_list_automations", "List automations — a trigger (webhook or cron) plus ordered steps — with each one's run_as user and last_run. Start here when a CI redeploy 'didn't happen': last_run says what the latest firing did, and an inactive run_as means every firing is being refused", {}, async () => {
+    const res = await api("GET", "/admin/automations");
+    return { content: text(res) };
+});
+
+server.tool("lattice_get_automation", "Get one automation: trigger, ordered steps, run_as user, running_run_id (set while a run holds its guard) and last_run. http_request header values, bodies and URL paths come back masked", {
+    id: z.number().describe("Automation ID"),
+}, async ({ id }) => {
+    const res = await api("GET", `/admin/automations/${id}`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_create_automation", "Create an automation: one trigger plus ordered steps. Use it to redeploy containers in SEVERAL stacks from one CI call — a deploy token only reaches one stack. Steps run in order and stop at the first failure unless continue_on_error. The automation runs as the user who owns this MCP's API token, and every step is authorised against that user each time it runs. A webhook trigger and http_request steps require the admin role. For a webhook trigger the response carries webhook_token/webhook_path once; this server masks them — read the URL from the Lattice UI, or set LATTICE_ALLOW_SECRET_VALUES=1. CI calls it as POST https://<lattice>/api/automations/<token>?commit=<sha>: 200 succeeded or disabled, 409 skipped (already running), 424 failed", {
+    name: z.string().describe("Display name, up to 128 characters"),
+    description: z.string().optional().describe("Optional description"),
+    enabled: z.boolean().optional().describe("Default true — it fires on its trigger as soon as it is created"),
+    trigger: automationTriggerSchema,
+    actions: z.array(automationActionSchema).min(1).max(20).describe("Ordered steps, 1-20"),
+}, async ({ name, description, enabled, trigger, actions }) => {
+    const res = await api("POST", "/admin/automations", null, body({ name, description, enabled, trigger, actions }));
+    return { content: text(res) };
+});
+
+server.tool("lattice_update_automation", "Update an automation. Omitted fields are left alone; description \"\" clears it. Passing trigger or actions REDEFINES it, which moves its run-as identity to this MCP token's user — who must be able to run every step — while a rename does not. Changing the trigger to webhook mints a token (returned once, masked); changing it away from webhook kills the old URL. To switch it on or off use lattice_enable_automation / lattice_disable_automation", {
+    id: z.number().describe("Automation ID"),
+    name: z.string().optional().describe("New name"),
+    description: z.string().optional().describe("New description; \"\" clears it"),
+    trigger: automationTriggerSchema.optional().describe("Replacement trigger — redefines the automation"),
+    actions: z.array(automationActionSchema).min(1).max(20).optional().describe("Replacement step list — redefines the automation"),
+}, async ({ id, name, description, trigger, actions }) => {
+    const res = await api("PUT", `/admin/automations/${id}`, null, body({ name, description, trigger, actions }));
+    return { content: text(res) };
+});
+
+server.tool("lattice_enable_automation", "Switch an automation on. Re-validates it first — a renamed container or deleted stack is refused here rather than on the next firing — and makes this MCP token's user its run-as identity", {
+    id: z.number().describe("Automation ID"),
+}, async ({ id }) => {
+    const res = await api("POST", `/admin/automations/${id}/enable`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_disable_automation", "Switch an automation off. It fires nothing while disabled: its webhook answers 200 with result \"disabled\", and each firing is still recorded as a skipped run", {
+    id: z.number().describe("Automation ID"),
+}, async ({ id }) => {
+    const res = await api("POST", `/admin/automations/${id}/disable`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_run_automation", "Fire an automation now and wait for the verdict (a run is bounded to 50s). Returns {result, run}: result is succeeded | failed | skipped | disabled, and run.steps has every step's outcome. This performs the real actions — it redeploys containers and sends HTTP requests", {
+    id: z.number().describe("Automation ID"),
+}, async ({ id }) => {
+    const res = await api("POST", `/admin/automations/${id}/run`, null, null, 65000);
+    return { content: text(res) };
+});
+
+server.tool("lattice_rotate_automation_token", "Replace a webhook automation's token. The old URL stops working immediately — CI still calling it gets 401 until updated. The new token is returned once and masked by this server; read it from the Lattice UI, or set LATTICE_ALLOW_SECRET_VALUES=1", {
+    id: z.number().describe("Automation ID (webhook trigger only)"),
+}, async ({ id }) => {
+    const res = await api("POST", `/admin/automations/${id}/rotate-token`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_delete_automation", "Delete an automation. It stops firing and its webhook URL stops working immediately; its run history is no longer reachable, though the audit log keeps every action it took. Destructive — lattice_disable_automation only switches it off", {
+    id: z.number().describe("Automation ID"),
+}, async ({ id }) => {
+    const res = await api("DELETE", `/admin/automations/${id}`);
+    return { content: text(res) };
+});
+
+server.tool("lattice_list_automation_runs", "An automation's run history, newest first — the first thing to reach for when an automation 'didn't work'. Every firing is a row, including skipped ones (disabled, already running, no runner slot, stale schedule slot) with skip_reason; failed_step names the first failing step, error explains a refused run, and steps[] carries each step's summary and error", {
+    id: z.number().describe("Automation ID"),
+    limit: z.number().optional().describe("Max runs (default 50, max 500)"),
+    offset: z.number().optional().describe("Offset for pagination"),
+}, async ({ id, limit, offset }) => {
+    const res = await api("GET", `/admin/automations/${id}/runs`, { limit, offset });
     return { content: text(res) };
 });
 

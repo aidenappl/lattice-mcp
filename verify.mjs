@@ -125,6 +125,19 @@ if (!/const ALLOW_SECRETS = process\.env\.LATTICE_ALLOW_SECRET_VALUES === "1"/.t
     fail("the masking opt-out is not the expected LATTICE_ALLOW_SECRET_VALUES === \"1\" check — masking may no longer default to on");
 }
 
+// Automation responses carry two credentials the generic field list did not
+// cover when automations were added: the webhook token (and the path that
+// embeds it), and http_request step configs, whose secrets sit in header values,
+// the body and the URL path. Dropping either rule leaks a working credential.
+for (const field of ["webhook_token", "webhook_path"]) {
+    if (!new RegExp(`const SECRET_FIELDS = new Set\\(\\[[^\\]]*"${field}"`, "s").test(source)) {
+        fail(`"${field}" is no longer in SECRET_FIELDS — automation webhook credentials would reach the transcript`);
+    }
+}
+if (!/k === "config" && node\.type === "http_request"[\s\S]{0,80}maskHttpRequestConfig\(v\)/.test(source)) {
+    fail("sanitise() no longer routes http_request step configs through maskHttpRequestConfig() — header values, bodies and webhook URL paths would leak");
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 if (failures.length > 0) {
     console.error("verification failed:\n");
@@ -138,3 +151,4 @@ console.log(`✓ ${toolCount} tools registered, no duplicates, all lattice_-pref
 console.log(`✓ README.md and AGENTS.md agree on the tool count`);
 console.log(`✓ every tool appears in the README tool tables`);
 console.log(`✓ sanitise() is wired into api() and masking defaults to on`);
+console.log(`✓ automation webhook tokens and http_request configs are masked`);

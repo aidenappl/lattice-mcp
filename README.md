@@ -8,7 +8,7 @@ Model Context Protocol server for [Lattice](https://github.com/aidenappl/lattice
 
 ## Overview
 
-`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **136 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
+`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **146 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
 
 Once configured, ask Claude Code things like:
 
@@ -17,6 +17,8 @@ Once configured, ask Claude Code things like:
 - "Which containers are unhealthy?" (`lattice_get_anomalies` is the best first call)
 - "Deploy stack 5" / "Rollback the last deployment on stack 12"
 - "What image tags can I deploy from the registry?"
+- "Create an automation that redeploys monitor-core in both zones from one webhook"
+- "Why didn't the nightly automation run?" (`lattice_list_automation_runs` — skipped firings say why)
 
 ## Role in the appleby.cloud ecosystem
 
@@ -87,9 +89,11 @@ something, and not enough to use. The tail is a fixed width so the mask does not
 length.
 
 This covers container and stack `env_vars`, `compose_yaml` environment blocks, global env vars
-flagged `is_secret`, database passwords, and freshly minted deploy/worker/API tokens. Variable
-*names* are left readable — they are the useful half — as are addresses like `TOKEN_URL` and
-`AUTH_URL`.
+flagged `is_secret`, database passwords, freshly minted deploy/worker/API tokens, automation
+webhook tokens (`webhook_token` and the `webhook_path` that embeds it), and automation
+`http_request` steps — header values, the body, and the URL path, where Slack/Discord-style hooks
+keep their secret. Variable and header *names* are left readable — they are the useful half — as
+are the URL's host and addresses like `TOKEN_URL` and `AUTH_URL`.
 
 This server authenticates as a Lattice **admin**, and the API only masks global env vars
 server-side for *non-admin* callers. Without this step, `lattice_list_env_vars` returns every
@@ -105,12 +109,13 @@ Set `LATTICE_ALLOW_SECRET_VALUES=1` to turn masking off if you genuinely need a 
 | `npm install` | Install dependencies (not vendored) |
 | `node --check index.js` | Syntax gate — the only static check that exists |
 | `LATTICE_API_URL=… LATTICE_API_TOKEN=… node index.js` | Run the server on stdio |
-| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 136) |
+| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 146) |
+| `npm test` | `verify.mjs` — syntax, duplicate names, doc counts, version consistency, masking wiring |
 | `npm publish` | Publish to npm — **this is deployment** (requires 2FA passkey from an interactive terminal) |
 
 ## Tools
 
-All 136 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
+All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
 
 ### Overview & health
 | Tool | Description |
@@ -258,6 +263,22 @@ All 136 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | `lattice_delete_deploy_token` | Delete a CI deploy token ⚠️ |
 | `lattice_approve_deployment` | Approve a deployment awaiting approval |
 
+### Automations
+A trigger (webhook or UTC cron) plus ordered steps. One webhook can redeploy containers in any number of stacks — a deploy token reaches one. Automations created here run as the user who owns this server's API token, authorised each time they run.
+
+| Tool | Description |
+|------|-------------|
+| `lattice_list_automations` | Automations with their run-as user and last run — start here when a CI redeploy "didn't happen" |
+| `lattice_get_automation` | One automation's trigger, steps, run-as user and last run |
+| `lattice_create_automation` | Create one — webhook token returned once and masked |
+| `lattice_update_automation` | Rename, or redefine trigger/steps (redefining makes you the run-as user) |
+| `lattice_enable_automation` | Switch on — re-validates, makes you the run-as user |
+| `lattice_disable_automation` | Switch off — the webhook then answers 200 `disabled` |
+| `lattice_run_automation` | Fire now and wait for the verdict (up to 50s) — performs real actions |
+| `lattice_rotate_automation_token` | New webhook token; the old URL 401s immediately |
+| `lattice_delete_automation` | Delete — stops firing, kills the webhook URL ⚠️ |
+| `lattice_list_automation_runs` | Run history incl. skipped firings and why, with every step's result |
+
 ### Container definitions
 | Tool | Description |
 |------|-------------|
@@ -322,7 +343,7 @@ Everything lives in one file:
 
 | Path | Role |
 |------|------|
-| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 136 `server.tool(...)` registrations, transport connect. |
+| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 146 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata; `bin.lattice-mcp` → `index.js`. |
 | `AGENTS.md` | Contributor/agent guide — conventions, handler contracts, verification. |
 | `README.md` | This file. |

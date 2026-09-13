@@ -2,8 +2,9 @@
 
 > `lattice-mcp` is the **Model Context Protocol server for Lattice**, the container
 > orchestration platform that runs every `appleby.cloud` service. It exposes the
-> `lattice-api` admin surface to Claude Code as **136 typed tools** — workers, stacks,
-> containers, deployments, databases, registries, networks, volumes and instance config.
+> `lattice-api` admin surface to Claude Code as **146 typed tools** — workers, stacks,
+> containers, deployments, databases, automations, registries, networks, volumes and instance
+> config.
 > This file orients any agent/worker before touching code in this repo.
 >
 > **⚠️ Golden rule — keep this file current:** any change that adds, removes or retypes a
@@ -42,7 +43,8 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 
 | Path | Role |
 |------|------|
-| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 136 `server.tool(...)` registrations, transport connect. |
+| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 146 `server.tool(...)` registrations, transport connect. |
+| `verify.mjs` | `npm test` — static checks: syntax, duplicate tool names, doc counts, version consistency, `sanitise()` wiring. |
 | `package.json` | npm metadata. `bin.lattice-mcp` → `index.js`, so `npx lattice-mcp` works. |
 | `README.md` | User-facing setup + full tool table. |
 | `AGENTS.md` | This file. |
@@ -131,7 +133,8 @@ Four rules, in the order `sanitise()` applies them:
 | `env_vars` | Parsed as JSON, then values whose **key** matches `isSecretName()` are masked. The blob is not masked wholesale — variable names are the useful half. An unparseable blob *is* masked wholesale rather than passed through. |
 | `compose_yaml` | Assignment lines (`- NAME=value` and `NAME: value`) whose name matches `isSecretName()` are masked, without tracking YAML block structure. |
 | `value` when the sibling `is_secret` is `true` | Masked. Global env vars are only secret when flagged, and masking the rest would hide image tags, ports and hostnames. |
-| anything in `SECRET_FIELDS` | Masked at any nesting depth, in objects and arrays alike. |
+| `config` of an object whose `type` is `http_request` | An automation step's outbound request. Header values are masked unless the header is `Content-Type`/`Accept`/`User-Agent`, the body is masked, and the URL keeps its origin with the path masked — Slack/Discord-style hooks carry the secret in the path. Method, host and header names stay readable. |
+| anything in `SECRET_FIELDS` | Masked at any nesting depth, in objects and arrays alike. Includes `webhook_token` and `webhook_path` (the path embeds the automation's token). |
 
 `isSecretName()` matches password/secret/token/key/credential/dsn shapes but **excludes names
 ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`, `_issuer`** — `TOKEN_URL` and
@@ -160,9 +163,11 @@ exits immediately if either is missing. In practice these come from the `env` bl
 
 **Tool groups**, in file order:
 
-The counts below sum to **133**, matching the header and `grep -c 'server.tool(' index.js`. The
-first rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner comment);
-every bolded row corresponds to a `// ───` banner group and matches its exact in-file name.
+The header figure is the authoritative count — `npm test` checks it against
+`grep -c 'server.tool(' index.js`. The per-group counts below are descriptive and had already
+drifted from it before 1.6.0 (they summed to 138 against 136 registrations); don't trust their
+sum. The first rows are the original, pre-`1.1.0` tools (registered top-of-file with no banner
+comment); every bolded row corresponds to a `// ───` banner group and matches its exact in-file name.
 
 | Group | Tools | Notes |
 |-------|-------|-------|
@@ -179,6 +184,7 @@ every bolded row corresponds to a `// ───` banner group and matches its ex
 | **Registries** | **8** | list/create/update/delete, `lattice_test_registry`, `lattice_test_registry_inline`, `lattice_list_registry_repositories`, `lattice_list_registry_tags` |
 | **Discovery & diagnostics** | **7** | `lattice_search`, `lattice_get_anomalies`, `lattice_get_fleet_metrics`, `lattice_get_versions`, `lattice_refresh_versions`, `lattice_get_container_metrics`, `lattice_get_self` |
 | **Stacks — lifecycle, compose & deploy tokens** | **13** | create/delete, `lattice_get_stack_containers`, compose update/sync/import, export/import, `lattice_save_stack_as_template`, deploy-token list/create/delete, `lattice_approve_deployment` |
+| **Automations** | **10** | list/get/create/update/delete, enable, disable, `lattice_run_automation` (65 s client timeout — a run's budget is 50 s), `lattice_rotate_automation_token`, `lattice_list_automation_runs`. `actions` is a typed `z.discriminatedUnion` on `type`, mirroring the API's config shapes |
 | **Containers — definition CRUD** | **3** | `lattice_create_container`, `lattice_update_container`, `lattice_delete_container` |
 | **Workers — registration, tokens, volumes, networks** | **16** | worker create/update/delete, `lattice_get_worker_container_stats`, worker-token ×3, volume ×3, worker-network ×3, `lattice_list_all_networks`, `lattice_delete_network`, `lattice_force_remove_container` |
 | **Global env vars, templates, webhooks** | **12** | env-var CRUD (4), template list/create/delete (3), webhook list/create/update/delete/test (5) |
@@ -269,6 +275,31 @@ cannot tell a bucket on the worker being backed up from one in another country.
 Parameters added: `locality` on backup destinations, `mirror_backup_destination_id` and
 `deletion_protection` on database update, `final_snapshot` on delete. The delete tool's `force`
 description now also states what force does *not* do — it does not override deletion protection.
+
+**1.6.0** mirrors `lattice-api` automations (`/admin/automations*`). Ten new tools, 136 → 146.
+Unpublished at the time of writing — lattice-api's automation routes must be deployed first, or
+every one of these tools 404s.
+
+An automation is one trigger (webhook or UTC cron) plus ordered steps (`redeploy_container`,
+`http_request`). It exists because a deploy token reaches exactly one stack: monitor-core's CI
+redeployed one zone through `?container=` and the second zone silently fell a release and eight
+migrations behind. Request shapes were taken from `routers/HandleAutomations.router.go`, not from
+the structs, and every tool was exercised against a locally running `lattice-api` before
+release. Three things an agent must know, all stated in the descriptions:
+
+- **An automation created here runs as this server's token owner**, and every step is authorised
+  against that user each time it runs. Redefining (trigger/actions) or enabling re-binds the
+  run-as identity to the caller; renaming does not.
+- **`redeploy_container` names a container by `stack_id` + `container_name`**, never an id — a
+  compose edit re-creates container ids.
+- **`lattice_run_automation` is synchronous** and performs the real actions. It is the one tool
+  that raises `api()`'s timeout (to 65 s), because the API allows a run 50 s and aborting early
+  would report a failure for a run still going. `api()` gained an optional fifth `timeoutMs`
+  argument for this; the default is unchanged.
+
+Masking was extended in the same change, because the new responses would otherwise have leaked:
+`webhook_token` and `webhook_path` joined `SECRET_FIELDS`, and `http_request` step configs get a
+dedicated rule (see *Sensitive value masking*).
 
 **1.4.0** exposes parameters added to `lattice-api` alongside the managed-database overhaul. No
 tool-count change.
