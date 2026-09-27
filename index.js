@@ -135,8 +135,9 @@ function maskHttpRequestConfig(cfg) {
 // AUTH_URL readable — they are addresses, not credentials, and masking them
 // makes an SSO misconfiguration much harder to diagnose.
 // A bare `_key` suffix counts too: OPENAI_KEY and STRIPE_KEY are credentials
-// that the api_key/access_key shapes missed.
-const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|signing[-_]?key|encryption[-_]?key|credential|dsn|salt|(^|_)key$)/i;
+// that the api_key/access_key shapes missed. So does a bare `_pw`/`_pwd`
+// suffix — REDIS_CACHE_PW slipped past `pass`.
+const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|signing[-_]?key|encryption[-_]?key|credential|dsn|salt|(^|_)key$|(^|_)pwd?$)/i;
 const ADDRESS_NAME = /_(url|uri|endpoint|host|port|issuer)$/i;
 
 function isSecretName(name) {
@@ -300,7 +301,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.1",
+    version: "1.6.2",
 });
 
 // Overview

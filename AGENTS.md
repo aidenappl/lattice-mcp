@@ -138,7 +138,7 @@ The rules, in the order `sanitise()` applies them:
 | anything in `SECRET_FIELDS` | Masked at any nesting depth, in objects and arrays alike. Includes `webhook_token` and `webhook_path` (the path embeds the automation's token). |
 
 `isSecretName()` matches password/secret/token/key/credential/dsn shapes, and any name ending in
-`_key`, but **excludes names ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`,
+`_key`, `_pw` or `_pwd`, but **excludes names ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`,
 `_issuer`** — `TOKEN_URL` and `AUTH_URL` are addresses, not credentials, and masking them makes
 an SSO misconfiguration much harder to diagnose.
 
@@ -309,6 +309,11 @@ release. Three things an agent must know, all stated in the descriptions:
 Masking was extended in the same change, because the new responses would otherwise have leaked:
 `webhook_token` and `webhook_path` joined `SECRET_FIELDS`, and `http_request` step configs get a
 dedicated rule (see *Sensitive value masking*).
+
+**1.6.2** adds a bare `_pw`/`_pwd` suffix to `isSecretName()` — `REDIS_CACHE_PW` in the
+`trailblaze-core` stack env leaked through 1.6.1 because `pass` did not match it. `UPWARD` does
+not. A scan of every stack, container and global env var for high-entropy values that survive
+masking now finds only public identifiers (OAuth client IDs, app/account IDs).
 
 **1.6.1** closes three masking gaps, each of which leaked a live credential into a transcript
 through `lattice_list_containers`. No tool changes.

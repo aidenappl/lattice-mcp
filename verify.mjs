@@ -178,6 +178,9 @@ if (masking) {
         PUBLIC_URL: "https://user:hunter2@example.com/path",
         HEALTH_CHECK_URL: "https://hc-ping.com/abc",
         MONKEY: "banana",
+        REDIS_CACHE_PW: "abc123",
+        DB_PWD: "abc123",
+        UPWARD: "north",
         PORT: "8001",
         REPLICAS: 3,
     });
@@ -190,6 +193,9 @@ if (masking) {
     expect("URL userinfo password even under an _URL name", e.PUBLIC_URL, "https://user:hu**********@example.com/path");
     expect("plain URL stays readable", e.HEALTH_CHECK_URL, "https://hc-ping.com/abc");
     expect("KEY inside a word is not a secret name", e.MONKEY, "banana");
+    expect("bare _PW suffix is a secret name", e.REDIS_CACHE_PW, "ab**********");
+    expect("bare _PWD suffix is a secret name", e.DB_PWD, "ab**********");
+    expect("PW inside a word is not a secret name", e.UPWARD, "north");
     expect("ordinary value stays readable", e.PORT, "8001");
     expect("non-string value passes through", e.REPLICAS, 3);
 
