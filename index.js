@@ -134,11 +134,41 @@ function maskHttpRequestConfig(cfg) {
 // than by name. The `_url`/`_uri`/`_endpoint` exclusion keeps TOKEN_URL and
 // AUTH_URL readable — they are addresses, not credentials, and masking them
 // makes an SSO misconfiguration much harder to diagnose.
-const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|signing[-_]?key|encryption[-_]?key|credential|dsn|salt)/i;
+// A bare `_key` suffix counts too: OPENAI_KEY and STRIPE_KEY are credentials
+// that the api_key/access_key shapes missed.
+const SECRET_NAME = /(pass(word|wd)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|signing[-_]?key|encryption[-_]?key|credential|dsn|salt|(^|_)key$)/i;
 const ADDRESS_NAME = /_(url|uri|endpoint|host|port|issuer)$/i;
 
 function isSecretName(name) {
     return SECRET_NAME.test(name) && !ADDRESS_NAME.test(name);
+}
+
+// A name rule only catches what someone thought to call a secret, so values
+// are checked too. Provider keys are recognised by their fixed prefixes and
+// masked whole, whatever the variable is called.
+const SECRET_VALUE = /^(sk-[A-Za-z0-9_-]{20,}|(sk|rk)_(live|test)_|whsec_|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_|glpat-|xox[abpors]-|AKIA[0-9A-Z]{16}$|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)/;
+
+// A connection string carries its password inline — ROOTED_DB=postgres://
+// user:pass@host names nothing secret. Only the password is masked, so the
+// scheme, user, host and database stay readable for diagnosis.
+const URL_CREDENTIALS = /([a-z][a-z0-9+.-]*:\/\/[^:@\/\s]*:)([^@\/\s]+)(@)/gi;
+// Go's MySQL DSN form: user:password@tcp(host:port)/db
+const DSN_CREDENTIALS = /^([^:@\/\s]+:)([^@\s]+)(@(tcp|unix)\()/;
+
+function maskEmbeddedCredentials(value) {
+    return value
+        .replace(URL_CREDENTIALS, (_, head, pass, at) => head + mask(pass) + at)
+        .replace(DSN_CREDENTIALS, (_, head, pass, at) => head + mask(pass) + at);
+}
+
+// One env value, judged by its name and then by its content. Compose values
+// are often quoted, so the quotes are kept outside the mask.
+function maskEnvValue(name, value) {
+    if (typeof value !== "string" || value === "") return value;
+    const quoted = value.match(/^(["'])(.*)\1$/);
+    const [quote, bare] = quoted ? [quoted[1], quoted[2]] : ["", value];
+    if (isSecretName(name) || SECRET_VALUE.test(bare)) return quote + mask(bare) + quote;
+    return maskEmbeddedCredentials(value);
 }
 
 // Container and stack env vars arrive as a JSON object encoded in a string.
@@ -157,7 +187,7 @@ function maskEnvBlob(raw) {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return raw;
     const out = {};
     for (const [k, v] of Object.entries(parsed)) {
-        out[k] = isSecretName(k) && typeof v === "string" ? mask(v) : v;
+        out[k] = maskEnvValue(k, v);
     }
     return JSON.stringify(out);
 }
@@ -173,8 +203,10 @@ function maskComposeYAML(raw) {
         .split("\n")
         .map((line) => {
             const m = line.match(COMPOSE_ENV_LINE);
-            if (!m || !isSecretName(m[2])) return line;
-            return m[1] + m[2] + m[3] + mask(m[4].trim());
+            if (!m) return line;
+            const value = m[4].trim();
+            const masked = maskEnvValue(m[2], value);
+            return masked === value ? line : m[1] + m[2] + m[3] + masked;
         })
         .join("\n");
 }
@@ -195,6 +227,10 @@ function sanitise(node) {
             // Global env vars: the value is only a secret when flagged as one,
             // and masking the rest would hide image tags, ports and hostnames.
             out[k] = mask(v);
+        } else if (k === "value" && node.is_secret === false) {
+            // An unflagged global var still gets the name and content checks —
+            // the flag is set by hand and is easy to forget.
+            out[k] = maskEnvValue(typeof node.key === "string" ? node.key : "", v);
         } else if (SECRET_FIELDS.has(k) && typeof v === "string") {
             out[k] = mask(v);
         } else {
@@ -264,7 +300,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.0",
+    version: "1.6.1",
 });
 
 // Overview

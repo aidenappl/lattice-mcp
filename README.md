@@ -95,6 +95,11 @@ webhook tokens (`webhook_token` and the `webhook_path` that embeds it), and auto
 keep their secret. Variable and header *names* are left readable — they are the useful half — as
 are the URL's host and addresses like `TOKEN_URL` and `AUTH_URL`.
 
+Values are checked as well as names, so a secret does not have to be named like one to be
+caught. Known provider keys (`sk-…`, `ghp_…`, `AKIA…`, `xoxb-…`, JWTs) are masked under any
+variable name, including unflagged global env vars, and a password inside a connection string
+is masked in place: `postgres://app:hu**********@db:5432/app`.
+
 This server authenticates as a Lattice **admin**, and the API only masks global env vars
 server-side for *non-admin* callers. Without this step, `lattice_list_env_vars` returns every
 secret value in plaintext.

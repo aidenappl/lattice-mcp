@@ -22,6 +22,7 @@
 
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import vm from "node:vm";
 
 const failures = [];
 const fail = (msg) => failures.push(msg);
@@ -138,6 +139,86 @@ if (!/k === "config" && node\.type === "http_request"[\s\S]{0,80}maskHttpRequest
     fail("sanitise() no longer routes http_request step configs through maskHttpRequestConfig() — header values, bodies and webhook URL paths would leak");
 }
 
+// ── Masking behaviour ────────────────────────────────────────────────────────
+// The checks above prove sanitise() is wired in; these prove it masks. The
+// masking section is lifted out of index.js and run in a sandbox, since the
+// module itself cannot be imported. Every case here is a leak that happened:
+// OPENAI_KEY slipped the name rule, and ROOTED_DB/CORE_DB carried passwords
+// inside connection strings under names that say nothing about a secret.
+// Test values are assembled at runtime so no literal looks like a real key.
+const maskingStart = source.indexOf("// --- Sensitive value masking ---");
+const maskingEnd = source.indexOf("// --- HTTP helper ---");
+let masking = null;
+if (maskingStart === -1 || maskingEnd === -1) {
+    fail("could not find the masking section markers in index.js");
+} else {
+    const sandbox = { process: { env: {} } };
+    vm.createContext(sandbox);
+    vm.runInContext(`${source.slice(maskingStart, maskingEnd)}\nthis.sanitise = sanitise;`, sandbox);
+    masking = sandbox;
+}
+
+let maskingCases = 0;
+if (masking) {
+    const fakeOpenAI = "sk-" + "proj-" + "x".repeat(40);
+    const fakeGitHub = "ghp" + "_" + "y".repeat(36);
+    const env = (vars) => JSON.parse(masking.sanitise({ env_vars: JSON.stringify(vars) }).env_vars);
+    const expect = (label, got, want) => {
+        maskingCases++;
+        if (got !== want) fail(`masking: ${label} — got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    };
+
+    const e = env({
+        OPENAI_KEY: fakeOpenAI,
+        STRIPE_KEY: "abc123",
+        UNNAMED: fakeOpenAI,
+        SOME_TOKENISH: fakeGitHub,
+        ROOTED_DB: "postgres://postgres:hunter2@db.example:5432/rooted?sslmode=disable",
+        CORE_DB: "user:hunter2@tcp(db.example:3306)/core",
+        PUBLIC_URL: "https://user:hunter2@example.com/path",
+        HEALTH_CHECK_URL: "https://hc-ping.com/abc",
+        MONKEY: "banana",
+        PORT: "8001",
+        REPLICAS: 3,
+    });
+    expect("bare _KEY suffix is a secret name", e.OPENAI_KEY, "sk**********");
+    expect("short _KEY value is masked", e.STRIPE_KEY, "ab**********");
+    expect("provider key prefix is masked under any name", e.UNNAMED, "sk**********");
+    expect("GitHub token prefix is masked", e.SOME_TOKENISH, "gh**********");
+    expect("password inside a postgres URL", e.ROOTED_DB, "postgres://postgres:hu**********@db.example:5432/rooted?sslmode=disable");
+    expect("password inside a Go MySQL DSN", e.CORE_DB, "user:hu**********@tcp(db.example:3306)/core");
+    expect("URL userinfo password even under an _URL name", e.PUBLIC_URL, "https://user:hu**********@example.com/path");
+    expect("plain URL stays readable", e.HEALTH_CHECK_URL, "https://hc-ping.com/abc");
+    expect("KEY inside a word is not a secret name", e.MONKEY, "banana");
+    expect("ordinary value stays readable", e.PORT, "8001");
+    expect("non-string value passes through", e.REPLICAS, 3);
+
+    const compose = masking.sanitise({
+        compose_yaml: [
+            "    environment:",
+            "      - OPENAI_KEY=" + fakeOpenAI,
+            `      UNNAMED: "${fakeOpenAI}"`,
+            "      - ROOTED_DB=postgres://u:hunter2@db/x",
+            "      - PORT=8001",
+        ].join("\n"),
+    }).compose_yaml.split("\n");
+    expect("compose: _KEY assignment", compose[1], "      - OPENAI_KEY=sk**********");
+    expect("compose: quoted provider key keeps its quotes", compose[2], `      UNNAMED: "sk**********"`);
+    expect("compose: connection string password", compose[3], "      - ROOTED_DB=postgres://u:hu**********@db/x");
+    expect("compose: ordinary line untouched", compose[4], "      - PORT=8001");
+
+    const globals = masking.sanitise([
+        { key: "OPENAI_KEY", value: fakeOpenAI, is_secret: false },
+        { key: "ANYTHING", value: fakeOpenAI, is_secret: false },
+        { key: "IMAGE_TAG", value: "v1.4.0", is_secret: false },
+        { key: "FLAGGED", value: "v1.4.0", is_secret: true },
+    ]);
+    expect("unflagged global: secret name", globals[0].value, "sk**********");
+    expect("unflagged global: provider key", globals[1].value, "sk**********");
+    expect("unflagged global: ordinary value", globals[2].value, "v1.4.0");
+    expect("flagged global: always masked", globals[3].value, "v1**********");
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 if (failures.length > 0) {
     console.error("verification failed:\n");
@@ -152,3 +233,4 @@ console.log(`✓ README.md and AGENTS.md agree on the tool count`);
 console.log(`✓ every tool appears in the README tool tables`);
 console.log(`✓ sanitise() is wired into api() and masking defaults to on`);
 console.log(`✓ automation webhook tokens and http_request configs are masked`);
+console.log(`✓ ${maskingCases} masking behaviour cases pass (names, provider keys, connection strings)`);

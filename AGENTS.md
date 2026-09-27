@@ -126,20 +126,29 @@ safe: you can still tell a `frt_` token from an `obk_` one, spot that two contai
 key, or confirm a rotation actually changed a value. The tail is fixed width so the mask does
 not disclose the real length. Values under three characters are masked whole.
 
-Four rules, in the order `sanitise()` applies them:
+The rules, in the order `sanitise()` applies them:
 
 | Field | Handling |
 |-------|----------|
-| `env_vars` | Parsed as JSON, then values whose **key** matches `isSecretName()` are masked. The blob is not masked wholesale — variable names are the useful half. An unparseable blob *is* masked wholesale rather than passed through. |
-| `compose_yaml` | Assignment lines (`- NAME=value` and `NAME: value`) whose name matches `isSecretName()` are masked, without tracking YAML block structure. |
-| `value` when the sibling `is_secret` is `true` | Masked. Global env vars are only secret when flagged, and masking the rest would hide image tags, ports and hostnames. |
+| `env_vars` | Parsed as JSON, then each value goes through `maskEnvValue()` — masked when its **key** matches `isSecretName()` or its **value** is a known provider key, and any connection-string password masked in place. The blob is not masked wholesale — variable names are the useful half. An unparseable blob *is* masked wholesale rather than passed through. |
+| `compose_yaml` | Assignment lines (`- NAME=value` and `NAME: value`) go through `maskEnvValue()`, without tracking YAML block structure. Quotes stay outside the mask. |
+| `value` when the sibling `is_secret` is `true` | Masked. |
+| `value` when the sibling `is_secret` is `false` | Through `maskEnvValue()` with the sibling `key` — the flag is set by hand and easy to forget, but masking every value would hide image tags, ports and hostnames. |
 | `config` of an object whose `type` is `http_request` | An automation step's outbound request. Header values are masked unless the header is `Content-Type`/`Accept`/`User-Agent`, the body is masked, and the URL keeps its origin with the path masked — Slack/Discord-style hooks carry the secret in the path. Method, host and header names stay readable. |
 | anything in `SECRET_FIELDS` | Masked at any nesting depth, in objects and arrays alike. Includes `webhook_token` and `webhook_path` (the path embeds the automation's token). |
 
-`isSecretName()` matches password/secret/token/key/credential/dsn shapes but **excludes names
-ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`, `_issuer`** — `TOKEN_URL` and
-`AUTH_URL` are addresses, not credentials, and masking them makes an SSO misconfiguration much
-harder to diagnose.
+`isSecretName()` matches password/secret/token/key/credential/dsn shapes, and any name ending in
+`_key`, but **excludes names ending in `_url`, `_uri`, `_endpoint`, `_host`, `_port`,
+`_issuer`** — `TOKEN_URL` and `AUTH_URL` are addresses, not credentials, and masking them makes
+an SSO misconfiguration much harder to diagnose.
+
+Names alone are not enough — a secret is only caught if someone named it like one. So
+`env_vars`, `compose_yaml` and unflagged global env vars go through **`maskEnvValue()`**, which
+also checks the value: known provider-key prefixes (`sk-`, `ghp_`, `AKIA…`, `xoxb-`, JWTs, …) are
+masked whole under any name, and a password embedded in a connection string
+(`scheme://user:pass@host`, `user:pass@tcp(host)/db`) is masked in place so the rest stays
+readable. This applies even under an `_url` name — the exclusion protects addresses, not the
+credentials inside them.
 
 **Why this repo needs it more than the others:** this MCP authenticates as a Lattice **admin**,
 and `lattice-api` only masks global env vars server-side *for non-admin callers*
@@ -300,6 +309,21 @@ release. Three things an agent must know, all stated in the descriptions:
 Masking was extended in the same change, because the new responses would otherwise have leaked:
 `webhook_token` and `webhook_path` joined `SECRET_FIELDS`, and `http_request` step configs get a
 dedicated rule (see *Sensitive value masking*).
+
+**1.6.1** closes three masking gaps, each of which leaked a live credential into a transcript
+through `lattice_list_containers`. No tool changes.
+
+- `OPENAI_KEY` passed through: `isSecretName()` only knew `api_key`/`access_key`-style shapes.
+  A bare `_key` suffix (`(^|_)key$`) now counts. `MONKEY` does not.
+- `ROOTED_DB=postgres://user:pass@host` passed through: the name says nothing about a secret.
+  Values are now checked too — `maskEnvValue()` masks known provider-key prefixes whole
+  (`SECRET_VALUE`) and masks only the password inside a URL or Go MySQL DSN
+  (`maskEmbeddedCredentials()`), leaving scheme, user, host and database readable.
+- Global env vars with `is_secret: false` were never inspected. They now get the same name and
+  value checks; `is_secret: true` still masks unconditionally.
+
+`verify.mjs` now runs the masking section in a `vm` sandbox against 19 cases, so the rules are
+tested by behaviour, not just by being wired in. Against 1.6.0's code, 11 of them fail.
 
 **1.4.0** exposes parameters added to `lattice-api` alongside the managed-database overhaul. No
 tool-count change.
