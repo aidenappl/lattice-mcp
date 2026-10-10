@@ -404,7 +404,8 @@ container and volume on disk.
 - **Keep destructive descriptions honest.** If a tool destroys data, the description must say so
   and name the safer alternative.
 - Publishing is outward-facing and effectively irreversible (npm unpublish is restricted after
-  72 hours) — do not publish without explicit instruction.
+  72 hours) — publish **only after asking Aiden and getting an explicit yes** for that specific
+  version (see `~/CLAUDE.md` *Ask-first actions*).
 
 ## Verification — always before "done"
 
