@@ -301,7 +301,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.2",
+    version: "1.6.3",
 });
 
 // Overview
@@ -1243,12 +1243,13 @@ server.tool("lattice_create_container", "Add a container definition to a stack. 
     env_vars: z.string().optional().describe("JSON object string of environment variables"),
     volumes: z.string().optional().describe("JSON object string of host:container volume mappings"),
     cpu_limit: z.number().optional().describe("CPU limit in cores"),
-    memory_limit: z.number().optional().describe("Memory limit in bytes"),
+    memory_limit: z.number().optional().describe("Memory limit in MEGABYTES (stored as MB; the deploy converts to bytes)"),
     replicas: z.number().optional().describe("Replica count"),
     restart_policy: z.string().optional().describe("e.g. 'unless-stopped', 'always'"),
     command: z.string().optional().describe("Override the image command"),
     entrypoint: z.string().optional().describe("Override the image entrypoint"),
     health_check: z.string().optional().describe("JSON object string describing the healthcheck"),
+    ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ stack_id, ...fields }) => {
     const res = await api("POST", `/admin/stacks/${stack_id}/containers`, null, body(fields));
     return { content: text(res) };
@@ -1269,6 +1270,7 @@ server.tool("lattice_update_container", "Update a container definition. Changes 
     restart_policy: z.string().optional(),
     command: z.string().optional(),
     entrypoint: z.string().optional(),
+    ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Pass '' to clear. Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ id, ...fields }) => {
     const res = await api("PUT", `/admin/containers/${id}`, null, body(fields));
     return { content: text(res) };

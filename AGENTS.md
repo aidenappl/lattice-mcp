@@ -315,6 +315,15 @@ dedicated rule (see *Sensitive value masking*).
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
 
+**1.6.3** adds `ulimits` to `lattice_create_container` and `lattice_update_container` (lattice-api
+v1.4.7, migration 019). Shape taken from `HandleCreateContainer`/`HandleUpdateContainer` and
+`routers/deploy_spec.go`: a JSON object string in compose form — `{"nofile": 1024}` or
+`{"nofile": {"soft": n, "hard": n}}`, `-1` unlimited — validated server-side (known names, soft ≤
+hard); `''` clears on update. It also corrects `lattice_create_container`'s `memory_limit`, still
+described as **bytes** after 1.2.0 fixed the same mistake on database instances: containers store
+**megabytes** too (the deploy multiplies), so a bytes value set a limit ~a million times too large.
+No tool-count change (146).
+
 **1.6.1** closes three masking gaps, each of which leaked a live credential into a transcript
 through `lattice_list_containers`. No tool changes.
 
