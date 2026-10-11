@@ -301,7 +301,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.3",
+    version: "1.6.4",
 });
 
 // Overview
@@ -1246,8 +1246,8 @@ server.tool("lattice_create_container", "Add a container definition to a stack. 
     memory_limit: z.number().optional().describe("Memory limit in MEGABYTES (stored as MB; the deploy converts to bytes)"),
     replicas: z.number().optional().describe("Replica count"),
     restart_policy: z.string().optional().describe("e.g. 'unless-stopped', 'always'"),
-    command: z.string().optional().describe("Override the image command"),
-    entrypoint: z.string().optional().describe("Override the image entrypoint"),
+    command: z.string().optional().describe("Override the image command: a shell-style string ('npm start', 'sh -c \"migrate && serve\"') or a JSON array string ('[\"npm\",\"start\"]'). An unquoted &&, |, ; is rejected (no shell runs it) — wrap it in sh -c. Needs lattice-api >= v1.4.9"),
+    entrypoint: z.string().optional().describe("Override the image entrypoint: a shell-style string ('npm start', 'sh -c \"migrate && serve\"') or a JSON array string ('[\"npm\",\"start\"]'). An unquoted &&, |, ; is rejected (no shell runs it) — wrap it in sh -c. Needs lattice-api >= v1.4.9"),
     health_check: z.string().optional().describe("JSON object string describing the healthcheck"),
     ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ stack_id, ...fields }) => {
@@ -1264,12 +1264,13 @@ server.tool("lattice_update_container", "Update a container definition. Changes 
     port_mappings: z.string().optional().describe("JSON array string"),
     env_vars: z.string().optional().describe("JSON object string"),
     volumes: z.string().optional().describe("JSON object string"),
-    cpu_limit: z.number().optional(),
-    memory_limit: z.number().optional(),
+    cpu_limit: z.number().nullable().optional().describe("CPU limit in cores; null removes the limit"),
+    memory_limit: z.number().nullable().optional().describe("Memory limit in MEGABYTES; null removes the limit"),
     replicas: z.number().optional(),
     restart_policy: z.string().optional(),
-    command: z.string().optional(),
-    entrypoint: z.string().optional(),
+    command: z.string().optional().describe("Image command override: a shell-style string ('npm start', 'sh -c \"migrate && serve\"') or a JSON array string ('[\"npm\",\"start\"]'). An unquoted &&, |, ; is rejected (no shell runs it) — wrap it in sh -c. '' clears it. Needs lattice-api >= v1.4.9"),
+    entrypoint: z.string().optional().describe("Image entrypoint override: a shell-style string ('npm start', 'sh -c \"migrate && serve\"') or a JSON array string ('[\"npm\",\"start\"]'). An unquoted &&, |, ; is rejected (no shell runs it) — wrap it in sh -c. '' clears it. Needs lattice-api >= v1.4.9"),
+    registry_id: z.number().nullable().optional().describe("Registry to pull from and watch for image updates; null unlinks it"),
     ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Pass '' to clear. Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ id, ...fields }) => {
     const res = await api("PUT", `/admin/containers/${id}`, null, body(fields));

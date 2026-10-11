@@ -315,6 +315,13 @@ dedicated rule (see *Sensitive value masking*).
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
 
+**1.6.4** (lattice-api v1.4.9): `command`/`entrypoint` on create/update container accept a
+shell-style string or a JSON array string — the API used to take only JSON and drop anything else
+at deploy. An unquoted `&&`/`|`/`;` is a 400 (no shell runs argv). `lattice_update_container`'s
+`cpu_limit`, `memory_limit` and new `registry_id` are `.nullable()`: `null` clears (the API decodes
+them as `tools.Optional`); omitting leaves them. Read from `HandleUpdateContainer` and
+`routers/command.go`. No tool-count change (146).
+
 **1.6.3** adds `ulimits` to `lattice_create_container` and `lattice_update_container` (lattice-api
 v1.4.7, migration 019). Shape taken from `HandleCreateContainer`/`HandleUpdateContainer` and
 `routers/deploy_spec.go`: a JSON object string in compose form — `{"nofile": 1024}` or
