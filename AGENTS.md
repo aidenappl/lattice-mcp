@@ -132,6 +132,18 @@ The rules, in the order `sanitise()` applies them:
 |-------|----------|
 | `env_vars` | Parsed as JSON, then each value goes through `maskEnvValue()` — masked when its **key** matches `isSecretName()` or its **value** is a known provider key, and any connection-string password masked in place. The blob is not masked wholesale — variable names are the useful half. An unparseable blob *is* masked wholesale rather than passed through. |
 | `compose_yaml` | Assignment lines (`- NAME=value` and `NAME: value`) go through `maskEnvValue()`, without tracking YAML block structure. Quotes stay outside the mask. |
+
+A pure interpolation reference (`${NAME}`, `$NAME`) is **never** masked, under any key — it is a
+variable name, not a value. With a default (`${NAME:-x}`) only the default is judged and masked.
+Before 1.6.5 `ENCRYPTION_KEY: ${ENCRYPTION_KEY}` read back as `${**********`.
+
+**Write guard (`refuseMasked`).** Every write tool that takes a field this server masks on read —
+`lattice_update_stack_compose` / `lattice_import_compose` (`compose_yaml`), `lattice_create_stack`
+/ `lattice_create_container` / `lattice_update_container` (`env_vars`), `lattice_create_env_var` /
+`lattice_update_env_var` (`value`) — returns an `isError` result, without calling the API, when
+the field contains the mask tail `**********`. Lattice cannot detect it (its own mask is `***`, and
+`mergeMaskedEnvVars` only understands that), so a read-edit-write round trip would silently store
+the literal mask over the real secret. Skipped under `LATTICE_ALLOW_SECRET_VALUES=1`.
 | `value` when the sibling `is_secret` is `true` | Masked. |
 | `value` when the sibling `is_secret` is `false` | Through `maskEnvValue()` with the sibling `key` — the flag is set by hand and easy to forget, but masking every value would hide image tags, ports and hostnames. |
 | `config` of an object whose `type` is `http_request` | An automation step's outbound request. Header values are masked unless the header is `Content-Type`/`Accept`/`User-Agent`, the body is masked, and the URL keeps its origin with the path masked — Slack/Discord-style hooks carry the secret in the path. Method, host and header names stay readable. |
@@ -314,6 +326,13 @@ dedicated rule (see *Sensitive value masking*).
 `trailblaze-core` stack env leaked through 1.6.1 because `pass` did not match it. `UPWARD` does
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
+
+**1.6.5** — compose round-trip safety. Interpolation references are no longer masked, and write
+tools refuse input carrying the mask tail (see *Sensitive value masking*). Found 2026-10-16 adding
+one env line to the Keyring stack: five `${VAR}` references came back as `${**********`, so the
+compose could not be edited through this server at all. Tool descriptions now also say container
+IDs change whenever a compose is saved (`HandleUpdateCompose` soft-deletes and re-creates every
+container record) — the same edit moved keyring-api from 741 to 749. No tool-count change (146).
 
 **1.6.4** (lattice-api v1.4.9): `command`/`entrypoint` on create/update container accept a
 shell-style string or a JSON array string — the API used to take only JSON and drop anything else

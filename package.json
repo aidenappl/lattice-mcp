@@ -1,6 +1,6 @@
 {
   "name": "lattice-mcp",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "MCP server for Lattice container orchestration platform",
   "type": "module",
   "main": "index.js",

@@ -154,7 +154,7 @@ if (maskingStart === -1 || maskingEnd === -1) {
 } else {
     const sandbox = { process: { env: {} } };
     vm.createContext(sandbox);
-    vm.runInContext(`${source.slice(maskingStart, maskingEnd)}\nthis.sanitise = sanitise;`, sandbox);
+    vm.runInContext(`${source.slice(maskingStart, maskingEnd)}\nthis.sanitise = sanitise; this.refuseMasked = refuseMasked;`, sandbox);
     masking = sandbox;
 }
 
@@ -212,6 +212,26 @@ if (masking) {
     expect("compose: quoted provider key keeps its quotes", compose[2], `      UNNAMED: "sk**********"`);
     expect("compose: connection string password", compose[3], "      - ROOTED_DB=postgres://u:hu**********@db/x");
     expect("compose: ordinary line untouched", compose[4], "      - PORT=8001");
+
+    const refs = env({
+        ENCRYPTION_KEY: "${ENCRYPTION_KEY}",
+        MONITOR_API_KEY: "$MONITOR_APPLEBY_API_KEY",
+        DB_PASSWORD: "${DB_PASSWORD:-hunter2}",
+        PUBLIC_URL: "${PUBLIC_URL:-https://example.com}",
+        QUOTED_SECRET: '"${QUOTED_SECRET}"',
+    });
+    expect("reference: ${NAME} under a secret name is not masked", refs.ENCRYPTION_KEY, "${ENCRYPTION_KEY}");
+    expect("reference: $NAME under a secret name is not masked", refs.MONITOR_API_KEY, "$MONITOR_APPLEBY_API_KEY");
+    expect("reference: only a secret default is masked", refs.DB_PASSWORD, "${DB_PASSWORD:-hu**********}");
+    expect("reference: ordinary default stays readable", refs.PUBLIC_URL, "${PUBLIC_URL:-https://example.com}");
+    expect("reference: quoted reference is not masked", refs.QUOTED_SECRET, '"${QUOTED_SECRET}"');
+    const composeRef = masking.sanitise({ compose_yaml: "      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}" }).compose_yaml;
+    expect("compose: reference line untouched", composeRef, "      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}");
+
+    // Write guard: anything carrying this server's mask is refused; clean input is not.
+    const refusedRoundTrip = masking.refuseMasked({ compose_yaml: masking.sanitise({ compose_yaml: "      - OPENAI_KEY=" + fakeOpenAI }).compose_yaml });
+    expect("write guard: masked compose is refused", refusedRoundTrip?.isError, true);
+    expect("write guard: clean compose passes", masking.refuseMasked({ compose_yaml: "      PORT: 8001", env_vars: undefined }), null);
 
     const globals = masking.sanitise([
         { key: "OPENAI_KEY", value: fakeOpenAI, is_secret: false },

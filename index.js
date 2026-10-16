@@ -162,12 +162,28 @@ function maskEmbeddedCredentials(value) {
         .replace(DSN_CREDENTIALS, (_, head, pass, at) => head + mask(pass) + at);
 }
 
+// A pure interpolation reference — ${NAME} or $NAME — is a variable name, not a
+// value: `ENCRYPTION_KEY: ${ENCRYPTION_KEY}` discloses nothing. Masking it made
+// compose YAML read back as `${**********`, which is unusable for diagnosis and,
+// written back, replaced every reference with a literal (stack 21, 2026-10-16).
+// With a default (${NAME:-x}, ${NAME-x}) only the default can be a secret, so
+// only the default is masked.
+const ENV_REFERENCE = /^\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/;
+const ENV_REFERENCE_DEFAULT = /^(\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=?+])(.*)(\})$/;
+
 // One env value, judged by its name and then by its content. Compose values
 // are often quoted, so the quotes are kept outside the mask.
 function maskEnvValue(name, value) {
     if (typeof value !== "string" || value === "") return value;
     const quoted = value.match(/^(["'])(.*)\1$/);
     const [quote, bare] = quoted ? [quoted[1], quoted[2]] : ["", value];
+    if (ENV_REFERENCE.test(bare)) return value;
+    const withDefault = bare.match(ENV_REFERENCE_DEFAULT);
+    if (withDefault) {
+        const def = withDefault[2];
+        if (def === "" || !(isSecretName(name) || SECRET_VALUE.test(def))) return quote + withDefault[1] + maskEmbeddedCredentials(def) + withDefault[3] + quote;
+        return quote + withDefault[1] + mask(def) + withDefault[3] + quote;
+    }
     if (isSecretName(name) || SECRET_VALUE.test(bare)) return quote + mask(bare) + quote;
     return maskEmbeddedCredentials(value);
 }
@@ -210,6 +226,31 @@ function maskComposeYAML(raw) {
             return masked === value ? line : m[1] + m[2] + m[3] + masked;
         })
         .join("\n");
+}
+
+// Write guard. A value this server masked on the way out must never be written
+// back on the way in: reading a stack's compose, editing one line and saving it
+// would replace every masked secret with the literal "xx**********". The API
+// cannot tell — the mask is this server's, not Lattice's ("***") — so write
+// tools refuse any field carrying the mask tail. Returns an error result, or
+// null when the fields are clean.
+const MASK_TAIL = "**********";
+
+function refuseMasked(fields) {
+    if (ALLOW_SECRETS) return null;
+    const tainted = Object.entries(fields)
+        .filter(([, v]) => typeof v === "string" && v.includes(MASK_TAIL))
+        .map(([k]) => k);
+    if (tainted.length === 0) return null;
+    return {
+        isError: true,
+        content: [{
+            type: "text",
+            text: `Refused: ${tainted.join(", ")} contains "${MASK_TAIL}" — a value lattice-mcp masked when it was read. ` +
+                "Writing it back would replace the real secret with that literal. Edit in lattice-web (which shows real values), " +
+                "or change only fields that were never masked.",
+        }],
+    };
 }
 
 // Walks a decoded response and masks every sensitive value in place.
@@ -301,7 +342,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.4",
+    version: "1.6.5",
 });
 
 // Overview
@@ -372,7 +413,7 @@ server.tool("lattice_list_containers", "List containers with status, image, port
     return { content: text(res) };
 });
 
-server.tool("lattice_get_container", "Get full container details including config, health, env vars, ports", {
+server.tool("lattice_get_container", "Get full container details including config, health, env vars, ports. Container IDs are not stable: saving a stack's compose (lattice_update_stack_compose or lattice-web) replaces its container records with new IDs, so resolve the current ID by name (lattice_get_stack_containers) right before acting on one", {
     id: z.number().describe("Container ID"),
 }, async ({ id }) => {
     const res = await api("GET", `/admin/containers/${id}`);
@@ -435,7 +476,7 @@ server.tool("lattice_get_audit_log", "Get recent audit log entries (who did what
 });
 
 // Stack actions
-server.tool("lattice_deploy_stack", "Deploy a stack (all containers or specific ones)", {
+server.tool("lattice_deploy_stack", "Deploy a stack (all containers or specific ones). Container IDs are not stable: saving a stack's compose (lattice_update_stack_compose or lattice-web) replaces its container records with new IDs, so resolve the current ID by name (lattice_get_stack_containers) right before acting on one", {
     id: z.number().describe("Stack ID"),
     container_ids: z.array(z.number()).optional().describe("Specific container IDs to deploy (omit for all)"),
     force: z.boolean().optional().describe("Force redeploy — removes all containers and recreates from scratch"),
@@ -1004,6 +1045,8 @@ server.tool("lattice_create_stack", "Create an empty stack. Add containers with 
     auto_deploy: z.boolean().optional().describe("Redeploy automatically when a new image is pushed"),
     env_vars: z.string().optional().describe("Stack-level env vars as a JSON object string"),
 }, async (args) => {
+    const refused = refuseMasked({ env_vars: args.env_vars });
+    if (refused) return refused;
     const res = await api("POST", "/admin/stacks", null, body(args));
     return { content: text(res) };
 });
@@ -1015,17 +1058,19 @@ server.tool("lattice_delete_stack", "Delete a stack and every container in it. D
     return { content: text(res) };
 });
 
-server.tool("lattice_get_stack_containers", "List the containers belonging to one stack", {
+server.tool("lattice_get_stack_containers", "List the containers belonging to one stack — the reliable way to find a container's CURRENT ID by name. IDs are not stable: saving a stack's compose replaces its container records with new IDs", {
     id: z.number().describe("Stack ID"),
 }, async ({ id }) => {
     const res = await api("GET", `/admin/stacks/${id}/containers`);
     return { content: text(res) };
 });
 
-server.tool("lattice_update_stack_compose", "Replace a stack's compose YAML. This rewrites the stored definition but does not deploy — call lattice_deploy_stack afterwards", {
+server.tool("lattice_update_stack_compose", "Replace a stack's compose YAML. This rewrites the stored definition and replaces the stack's container records (new IDs) but does not deploy — call lattice_deploy_stack afterwards. Refuses YAML carrying this server's mask (**********): never round-trip a compose read from lattice_get_stack if it contains masked values", {
     id: z.number().describe("Stack ID"),
     compose_yaml: z.string().describe("Full compose YAML document"),
 }, async ({ id, compose_yaml }) => {
+    const refused = refuseMasked({ compose_yaml });
+    if (refused) return refused;
     const res = await api("PUT", `/admin/stacks/${id}/compose`, null, { compose_yaml });
     return { content: text(res) };
 });
@@ -1044,6 +1089,8 @@ server.tool("lattice_import_compose", "Create a new stack from a docker-compose 
     worker_id: z.number().optional().describe("Worker to pin the stack to"),
     deployment_strategy: z.string().optional().describe("Deployment strategy"),
 }, async (args) => {
+    const refused = refuseMasked({ compose_yaml: args.compose_yaml });
+    if (refused) return refused;
     const res = await api("POST", "/admin/stacks/import", null, body(args));
     return { content: text(res) };
 });
@@ -1251,6 +1298,8 @@ server.tool("lattice_create_container", "Add a container definition to a stack. 
     health_check: z.string().optional().describe("JSON object string describing the healthcheck"),
     ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ stack_id, ...fields }) => {
+    const refused = refuseMasked({ env_vars: fields.env_vars });
+    if (refused) return refused;
     const res = await api("POST", `/admin/stacks/${stack_id}/containers`, null, body(fields));
     return { content: text(res) };
 });
@@ -1273,6 +1322,8 @@ server.tool("lattice_update_container", "Update a container definition. Changes 
     registry_id: z.number().nullable().optional().describe("Registry to pull from and watch for image updates; null unlinks it"),
     ulimits: z.string().optional().describe("JSON object string of resource limits in compose shape, e.g. '{\"nofile\":{\"soft\":262144,\"hard\":262144}}' or '{\"nproc\":65535}' (one number = soft and hard; -1 = unlimited). Validated by the API (known names, soft <= hard). Pass '' to clear. Applied on the next deploy. Needs lattice-api >= v1.4.7"),
 }, async ({ id, ...fields }) => {
+    const refused = refuseMasked({ env_vars: fields.env_vars });
+    if (refused) return refused;
     const res = await api("PUT", `/admin/containers/${id}`, null, body(fields));
     return { content: text(res) };
 });
@@ -1429,6 +1480,8 @@ server.tool("lattice_create_env_var", "Create a global environment variable", {
     value: z.string().describe("Value"),
     is_secret: z.boolean().optional().describe("Mask the value in listings"),
 }, async (args) => {
+    const refused = refuseMasked({ value: args.value });
+    if (refused) return refused;
     const res = await api("POST", "/admin/env-vars", null, body(args));
     return { content: text(res) };
 });
@@ -1438,6 +1491,8 @@ server.tool("lattice_update_env_var", "Update a global environment variable's va
     value: z.string().optional().describe("New value"),
     is_secret: z.boolean().optional().describe("Mask the value in listings"),
 }, async ({ id, ...fields }) => {
+    const refused = refuseMasked({ value: fields.value });
+    if (refused) return refused;
     const res = await api("PUT", `/admin/env-vars/${id}`, null, body(fields));
     return { content: text(res) };
 });
