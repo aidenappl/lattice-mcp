@@ -100,6 +100,12 @@ caught. Known provider keys (`sk-…`, `ghp_…`, `AKIA…`, `xoxb-…`, JWTs) a
 variable name, including unflagged global env vars, and a password inside a connection string
 is masked in place: `postgres://app:hu**********@db:5432/app`.
 
+Interpolation references (`${ENCRYPTION_KEY}`, `$NAME`) are names, not values, and are left
+readable — only a `${NAME:-default}`'s default can be masked. Masked output is also guarded on the
+way back in: compose, env-var and container write tools **refuse** any input containing the mask
+tail `**********`, so editing a compose you read through this server can never write the mask
+over a real secret. Edit secrets in lattice-web.
+
 This server authenticates as a Lattice **admin**, and the API only masks global env vars
 server-side for *non-admin* callers. Without this step, `lattice_list_env_vars` returns every
 secret value in plaintext.
