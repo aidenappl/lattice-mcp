@@ -327,6 +327,12 @@ dedicated rule (see *Sensitive value masking*).
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
 
+**1.6.6** — `deployment_strategy` on `lattice_create_stack`, `lattice_update_stack` and
+`lattice_import_compose` is an enum of `rolling`, `blue-green`, `canary` — the values
+lattice-runner's executor handles and lattice-web offers. `lattice_create_stack` used to suggest
+`'recreate'`, which the `stacks.deployment_strategy` column rejects ("Data truncated", a 500 with
+no detail; found 2026-10-16 creating the proxy-api stack). No tool-count change (146).
+
 **1.6.5** — compose round-trip safety. Interpolation references are no longer masked, and write
 tools refuse input carrying the mask tail (see *Sensitive value masking*). Found 2026-10-16 adding
 one env line to the Keyring stack: five `${VAR}` references came back as `${**********`, so the
