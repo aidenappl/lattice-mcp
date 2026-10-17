@@ -342,7 +342,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.5",
+    version: "1.6.6",
 });
 
 // Overview
@@ -514,7 +514,7 @@ server.tool("lattice_update_stack", "Update stack configuration (name, descripti
     status: z.string().optional().describe("Stack status"),
     name: z.string().optional().describe("Stack name"),
     description: z.string().optional().describe("Stack description"),
-    deployment_strategy: z.string().optional().describe("Deployment strategy"),
+    deployment_strategy: z.enum(["rolling", "blue-green", "canary"]).optional().describe("Deployment strategy: rolling, blue-green or canary (the values lattice-runner executes; anything else is a database 500)"),
     worker_id: z.number().optional().describe("Assigned worker ID"),
     auto_deploy: z.boolean().optional().describe("Enable auto-deploy on image push"),
     active: z.boolean().optional().describe("Whether the stack is active"),
@@ -1041,7 +1041,7 @@ server.tool("lattice_create_stack", "Create an empty stack. Add containers with 
     name: z.string().describe("Stack name"),
     description: z.string().optional().describe("Description"),
     worker_id: z.number().optional().describe("Worker to pin the stack to"),
-    deployment_strategy: z.string().optional().describe("Deployment strategy, e.g. 'rolling', 'recreate'"),
+    deployment_strategy: z.enum(["rolling", "blue-green", "canary"]).optional().describe("Deployment strategy: rolling, blue-green or canary (the values lattice-runner executes; anything else is a database 500)"),
     auto_deploy: z.boolean().optional().describe("Redeploy automatically when a new image is pushed"),
     env_vars: z.string().optional().describe("Stack-level env vars as a JSON object string"),
 }, async (args) => {
@@ -1087,7 +1087,7 @@ server.tool("lattice_import_compose", "Create a new stack from a docker-compose 
     compose_yaml: z.string().describe("Full compose YAML document"),
     description: z.string().optional().describe("Description"),
     worker_id: z.number().optional().describe("Worker to pin the stack to"),
-    deployment_strategy: z.string().optional().describe("Deployment strategy"),
+    deployment_strategy: z.enum(["rolling", "blue-green", "canary"]).optional().describe("Deployment strategy: rolling, blue-green or canary (the values lattice-runner executes; anything else is a database 500)"),
 }, async (args) => {
     const refused = refuseMasked({ compose_yaml: args.compose_yaml });
     if (refused) return refused;
