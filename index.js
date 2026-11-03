@@ -352,8 +352,9 @@ server.tool("lattice_overview", "Get fleet overview: worker counts, stack counts
 });
 
 // Healthcheck
-server.tool("lattice_health", "Check API health and database connectivity", {}, async () => {
-    const res = await api("GET", "/healthcheck");
+server.tool("lattice_health", "Check API health, database connectivity and Monitor telemetry counters (sent, dropped, spooled, pending)", {}, async () => {
+    // /healthcheck is public and says only {status}; the detail is behind auth.
+    const res = await api("GET", "/admin/health");
     return { content: text(res) };
 });
 

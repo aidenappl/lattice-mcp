@@ -132,7 +132,7 @@ All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | Tool | Description |
 |------|-------------|
 | `lattice_overview` | Fleet overview — worker/stack/container counts, failed stacks, CPU/memory |
-| `lattice_health` | API health and database connectivity |
+| `lattice_health` | API health, database connectivity and telemetry counters (`GET /admin/health`) |
 | `lattice_get_version` | Deployed lattice-api version string — check deploy drift against GitHub tags |
 
 ### Workers
