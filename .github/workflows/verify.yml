@@ -6,6 +6,7 @@ name: Verify
 on:
   push:
     branches: [master]
+    paths-ignore: ['**.md', '.nexus.toml']
   pull_request:
   workflow_dispatch:
 
