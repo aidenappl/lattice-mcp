@@ -192,7 +192,7 @@ comment); every bolded row corresponds to a `// ───` banner group and matc
 
 | Group | Tools | Notes |
 |-------|-------|-------|
-| Overview & health | 3 | `lattice_overview`, `lattice_health`, `lattice_get_version` |
+| Overview & health | 3 | `lattice_overview`, `lattice_health` (`GET /admin/health`, needs lattice-api with APL-15), `lattice_get_version` |
 | Workers | 3 + 4 actions | list/get/metrics; reboot, upgrade, stop-all, start-all |
 | Stacks | 2 + 5 actions | list/get; deploy, restart, stop, start, update |
 | Containers | 4 + 8 actions | list/get/logs/lifecycle; start, stop, restart, kill, pause, unpause, remove, recreate. (`lattice_get_container_metrics` is *not* here — it lives under **Discovery & diagnostics**.) |
