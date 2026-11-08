@@ -342,7 +342,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.6",
+    version: "1.6.8",
 });
 
 // Overview
@@ -519,7 +519,8 @@ server.tool("lattice_update_stack", "Update stack configuration (name, descripti
     worker_id: z.number().optional().describe("Assigned worker ID"),
     auto_deploy: z.boolean().optional().describe("Enable auto-deploy on image push"),
     active: z.boolean().optional().describe("Whether the stack is active"),
-}, async ({ id, status, name, description, deployment_strategy, worker_id, auto_deploy, active }) => {
+    image_prune_keep: z.number().int().min(-1).max(20).optional().describe("Previous images per repository the runner keeps when it prunes after a successful deploy (default 2). 0 keeps none, -1 turns the prune off for this stack"),
+}, async ({ id, status, name, description, deployment_strategy, worker_id, auto_deploy, active, image_prune_keep }) => {
     const body = {};
     if (status !== undefined) body.status = status;
     if (name !== undefined) body.name = name;
@@ -528,6 +529,7 @@ server.tool("lattice_update_stack", "Update stack configuration (name, descripti
     if (worker_id !== undefined) body.worker_id = worker_id;
     if (auto_deploy !== undefined) body.auto_deploy = auto_deploy;
     if (active !== undefined) body.active = active;
+    if (image_prune_keep !== undefined) body.image_prune_keep = image_prune_keep;
     const res = await api("PUT", `/admin/stacks/${id}`, null, body);
     return { content: text(res) };
 });
@@ -998,7 +1000,7 @@ server.tool("lattice_search", "Search across workers, stacks and containers by n
     return { content: text(res) };
 });
 
-server.tool("lattice_get_anomalies", "Get detected fleet anomalies — restart loops, unhealthy containers, resource spikes, offline workers. The best first call when asked whether anything is wrong", {}, async () => {
+server.tool("lattice_get_anomalies", "Get detected fleet anomalies — restart loops, unhealthy containers, resource spikes, offline workers, low disk (low_disk: under 10% or 5 GB free). The best first call when asked whether anything is wrong", {}, async () => {
     const res = await api("GET", "/admin/anomalies");
     return { content: text(res) };
 });

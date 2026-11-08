@@ -327,6 +327,15 @@ dedicated rule (see *Sensitive value masking*).
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
 
+**1.6.8** (lattice-api APL-86): `lattice_update_stack` takes `image_prune_keep` (-1 to 20) —
+how many previous images per repository the runner keeps when it prunes the stack's unused images
+after a successful deploy (default 2, `-1` disables). `lattice_get_anomalies` now also returns
+`low_disk` (worker under 10% or 5 GB free). No tool-count change (146). Also brings `index.js`'s
+declared version back in line with `package.json` (1.6.7 bumped only the latter).
+
+**1.6.7** — `lattice_health` calls the authenticated `/admin/health` (Monitor telemetry counters)
+instead of the public `/healthcheck` (APL-15).
+
 **1.6.6** — `deployment_strategy` on `lattice_create_stack`, `lattice_update_stack` and
 `lattice_import_compose` is an enum of `rolling`, `blue-green`, `canary` — the values
 lattice-runner's executor handles and lattice-web offers. `lattice_create_stack` used to suggest
