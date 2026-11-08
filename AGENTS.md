@@ -2,7 +2,7 @@
 
 > `lattice-mcp` is the **Model Context Protocol server for Lattice**, the container
 > orchestration platform that runs every `appleby.cloud` service. It exposes the
-> `lattice-api` admin surface to Claude Code as **146 typed tools** — workers, stacks,
+> `lattice-api` admin surface to Claude Code as **147 typed tools** — workers, stacks,
 > containers, deployments, databases, automations, registries, networks, volumes and instance
 > config.
 > This file orients any agent/worker before touching code in this repo.
@@ -43,7 +43,7 @@ Those live in [`lattice-api`](https://github.com/aidenappl/lattice-api) and
 
 | Path | Role |
 |------|------|
-| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 146 `server.tool(...)` registrations, transport connect. |
+| `index.js` | Everything: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 147 `server.tool(...)` registrations, transport connect. |
 | `verify.mjs` | `npm test` — static checks: syntax, duplicate tool names, doc counts, version consistency, `sanitise()` wiring. |
 | `package.json` | npm metadata. `bin.lattice-mcp` → `index.js`, so `npx lattice-mcp` works. |
 | `README.md` | User-facing setup + full tool table. |
@@ -195,7 +195,7 @@ comment); every bolded row corresponds to a `// ───` banner group and matc
 | Overview & health | 3 | `lattice_overview`, `lattice_health` (`GET /admin/health`, needs lattice-api with APL-15), `lattice_get_version` |
 | Workers | 3 + 4 actions | list/get/metrics; reboot, upgrade, stop-all, start-all |
 | Stacks | 2 + 5 actions | list/get; deploy, restart, stop, start, update |
-| Containers | 4 + 8 actions | list/get/logs/lifecycle; start, stop, restart, kill, pause, unpause, remove, recreate. (`lattice_get_container_metrics` is *not* here — it lives under **Discovery & diagnostics**.) |
+| Containers | 5 + 8 actions | list/get/logs/log volume/lifecycle; start, stop, restart, kill, pause, unpause, remove, recreate. (`lattice_get_container_metrics` is *not* here — it lives under **Discovery & diagnostics**.) |
 | Deployments | 4 | list/get/logs, rollback. (`lattice_approve_deployment` is *not* here — it lives under **Stacks — lifecycle, compose & deploy tokens**.) |
 | Instance self-update | 2 | `lattice_update_api`, `lattice_update_web` — tell the API/web container to pull its latest image and redeploy itself |
 | Audit & API tokens | 4 | `lattice_get_audit_log`; API token list/create/delete |
@@ -326,6 +326,15 @@ dedicated rule (see *Sensitive value masking*).
 `trailblaze-core` stack env leaked through 1.6.1 because `pass` did not match it. `UPWARD` does
 not. A scan of every stack, container and global env var for high-entropy values that survive
 masking now finds only public identifiers (OAuth client IDs, app/account IDs).
+
+**1.6.9** (lattice-api APL-120 / APL-121): new `lattice_get_container_log_volume`
+(`GET /admin/container-logs/volume`, `days` 1–7, `limit` ≤ 500): lines and message bytes stored per
+container per UTC day, to find what fills `container_logs`. `lattice_update_stack` takes
+`log_lines_per_minute` (-1 unlimited, else 1–100000; 0 is a 400 from the API).
+`lattice_get_anomalies` documents `control_plane_low_disk` (the control-plane host itself,
+`worker_id` 0) and `lattice_health` the `control_plane_disk` samples. Needs lattice-api with #33
+(volume route, `log_lines_per_minute`) and #34 (control-plane disk); against an older API the new
+tool 404s and the field is ignored. Tool count 146 → 147.
 
 **1.6.8** (lattice-api APL-86): `lattice_update_stack` takes `image_prune_keep` (-1 to 20) —
 how many previous images per repository the runner keeps when it prunes the stack's unused images

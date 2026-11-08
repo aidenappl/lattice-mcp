@@ -342,7 +342,7 @@ function body(obj) {
 
 const server = new McpServer({
     name: "lattice",
-    version: "1.6.8",
+    version: "1.6.9",
 });
 
 // Overview
@@ -352,7 +352,7 @@ server.tool("lattice_overview", "Get fleet overview: worker counts, stack counts
 });
 
 // Healthcheck
-server.tool("lattice_health", "Check API health, database connectivity and Monitor telemetry counters (sent, dropped, spooled, pending)", {}, async () => {
+server.tool("lattice_health", "Check API health, database connectivity, Monitor telemetry counters (sent, dropped, spooled, pending) and the control-plane host's own free disk (control_plane_disk: root fs, compose dir and MariaDB data dir, each with free_mb, free_pct and low; status is degraded while any is low)", {}, async () => {
     // /healthcheck is public and says only {status}; the detail is behind auth.
     const res = await api("GET", "/admin/health");
     return { content: text(res) };
@@ -429,6 +429,15 @@ server.tool("lattice_get_container_logs", "Get recent container logs (stdout/std
     worker_id: z.number().optional().describe("Filter by worker ID"),
 }, async ({ id, limit, offset, stream, worker_id }) => {
     const res = await api("GET", `/admin/containers/${id}/logs`, { limit, offset, stream, worker_id });
+    return { content: text(res) };
+});
+
+// Reads every stored log row in the window (handler: HandleGetContainerLogVolume).
+server.tool("lattice_get_container_log_volume", "Report how much each container stored in container_logs per UTC day (lines, and bytes of message text), largest first — finds the containers that fill the control-plane disk. Rows: day, container_id (null for unmanaged), container_name, stack_id, lines, bytes. Lower a noisy stack's cap with lattice_update_stack log_lines_per_minute", {
+    days: z.number().int().min(1).max(7).optional().describe("UTC days back including today (1-7, default 1 = today only). Every row in the window is read, so keep it small"),
+    limit: z.number().int().min(1).max(500).optional().describe("Max rows (default 50, max 500)"),
+}, async ({ days, limit }) => {
+    const res = await api("GET", "/admin/container-logs/volume", { days, limit });
     return { content: text(res) };
 });
 
@@ -520,7 +529,8 @@ server.tool("lattice_update_stack", "Update stack configuration (name, descripti
     auto_deploy: z.boolean().optional().describe("Enable auto-deploy on image push"),
     active: z.boolean().optional().describe("Whether the stack is active"),
     image_prune_keep: z.number().int().min(-1).max(20).optional().describe("Previous images per repository the runner keeps when it prunes after a successful deploy (default 2). 0 keeps none, -1 turns the prune off for this stack"),
-}, async ({ id, status, name, description, deployment_strategy, worker_id, auto_deploy, active, image_prune_keep }) => {
+    log_lines_per_minute: z.number().int().min(-1).max(100000).optional().describe("Log lines each of the stack's containers may STORE per minute (default 1000); the rest are replaced by one '[lattice] N log lines dropped' row. The live log view still shows every line. -1 is unlimited, otherwise 1-100000"),
+}, async ({ id, status, name, description, deployment_strategy, worker_id, auto_deploy, active, image_prune_keep, log_lines_per_minute }) => {
     const body = {};
     if (status !== undefined) body.status = status;
     if (name !== undefined) body.name = name;
@@ -530,6 +540,7 @@ server.tool("lattice_update_stack", "Update stack configuration (name, descripti
     if (auto_deploy !== undefined) body.auto_deploy = auto_deploy;
     if (active !== undefined) body.active = active;
     if (image_prune_keep !== undefined) body.image_prune_keep = image_prune_keep;
+    if (log_lines_per_minute !== undefined) body.log_lines_per_minute = log_lines_per_minute;
     const res = await api("PUT", `/admin/stacks/${id}`, null, body);
     return { content: text(res) };
 });
@@ -1000,7 +1011,7 @@ server.tool("lattice_search", "Search across workers, stacks and containers by n
     return { content: text(res) };
 });
 
-server.tool("lattice_get_anomalies", "Get detected fleet anomalies — restart loops, unhealthy containers, resource spikes, offline workers, low disk (low_disk: under 10% or 5 GB free). The best first call when asked whether anything is wrong", {}, async () => {
+server.tool("lattice_get_anomalies", "Get detected fleet anomalies — restart loops, unhealthy containers, resource spikes, offline workers, low disk (low_disk: a worker under 10% or 5 GB free; control_plane_low_disk: the control-plane host itself, worker_id 0, details.label root/compose/mariadb). The best first call when asked whether anything is wrong", {}, async () => {
     const res = await api("GET", "/admin/anomalies");
     return { content: text(res) };
 });

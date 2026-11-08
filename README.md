@@ -8,7 +8,7 @@ Model Context Protocol server for [Lattice](https://github.com/aidenappl/lattice
 
 ## Overview
 
-`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **146 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
+`lattice-mcp` is a single-file Node ESM program (`index.js`) that speaks MCP over stdio and translates tool calls into HTTP requests against the `lattice-api` admin surface. It exposes **147 typed tools** and holds no business logic, caching or state of its own — every behaviour (pagination, validation, side effects) comes from `lattice-api`.
 
 Once configured, ask Claude Code things like:
 
@@ -120,19 +120,19 @@ Set `LATTICE_ALLOW_SECRET_VALUES=1` to turn masking off if you genuinely need a 
 | `npm install` | Install dependencies (not vendored) |
 | `node --check index.js` | Syntax gate — the only static check that exists |
 | `LATTICE_API_URL=… LATTICE_API_TOKEN=… node index.js` | Run the server on stdio |
-| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 146) |
+| `grep -c 'server.tool(' index.js` | Confirm the tool count (should be 147) |
 | `npm test` | `verify.mjs` — syntax, duplicate names, doc counts, version consistency, masking wiring |
 | `npm publish` | Publish to npm — **this is deployment** (requires 2FA passkey from an interactive terminal) |
 
 ## Tools
 
-All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
+All 147 tools, grouped as they appear in `index.js`. ⚠️ marks destructive tools; their descriptions state the blast radius.
 
 ### Overview & health
 | Tool | Description |
 |------|-------------|
 | `lattice_overview` | Fleet overview — worker/stack/container counts, failed stacks, CPU/memory |
-| `lattice_health` | API health, database connectivity and telemetry counters (`GET /admin/health`) |
+| `lattice_health` | API health, database connectivity, telemetry counters and the control-plane host's free disk (`GET /admin/health`) |
 | `lattice_get_version` | Deployed lattice-api version string — check deploy drift against GitHub tags |
 
 ### Workers
@@ -163,6 +163,7 @@ All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | `lattice_list_containers` | List containers with status, image, ports, health |
 | `lattice_get_container` | Full container details |
 | `lattice_get_container_logs` | Recent container logs (stdout/stderr); `offset` paginates into older logs, filter by `stream`/`worker_id` |
+| `lattice_get_container_log_volume` | Lines and bytes stored per container per UTC day, largest first: what fills `container_logs` (`days` 1–7) |
 | `lattice_get_container_lifecycle` | Lifecycle events (start, stop, health changes) |
 | `lattice_start_container` | Start a stopped container |
 | `lattice_stop_container` | Stop a running container |
@@ -250,7 +251,7 @@ All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | Tool | Description |
 |------|-------------|
 | `lattice_search` | Search workers, stacks and containers in one call |
-| `lattice_get_anomalies` | **Restart loops, unhealthy containers, offline workers — best first call** |
+| `lattice_get_anomalies` | **Restart loops, unhealthy containers, offline workers, low disk on workers and the control plane — best first call** |
 | `lattice_get_fleet_metrics` | Aggregated fleet CPU/memory/disk/network |
 | `lattice_get_versions` | Runner versions and what's outdated |
 | `lattice_refresh_versions` | Re-poll every worker for its current runner version |
@@ -354,7 +355,7 @@ Everything lives in one file:
 
 | Path | Role |
 |------|------|
-| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 146 `server.tool(...)` registrations, transport connect. |
+| `index.js` | The whole server: `--setup` flow, config read, `api()` HTTP helper, `text()`/`body()` helpers, all 147 `server.tool(...)` registrations, transport connect. |
 | `package.json` | npm metadata; `bin.lattice-mcp` → `index.js`. |
 | `AGENTS.md` | Contributor/agent guide — conventions, handler contracts, verification. |
 | `README.md` | This file. |
