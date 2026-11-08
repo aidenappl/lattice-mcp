@@ -155,7 +155,7 @@ All 146 tools, grouped as they appear in `index.js`. ⚠️ marks destructive to
 | `lattice_restart_stack` | Restart all containers in a stack |
 | `lattice_stop_stack` | Stop all containers in a stack |
 | `lattice_start_stack` | Start all containers in a stack |
-| `lattice_update_stack` | Update stack configuration |
+| `lattice_update_stack` | Update stack configuration (incl. `image_prune_keep`) |
 
 ### Containers
 | Tool | Description |
